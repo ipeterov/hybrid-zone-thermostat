@@ -132,8 +132,10 @@ export class HztZoneCard extends LitElement {
       class=${glow ?? ""}
       @click=${(e: MouseEvent) => this.onCardClick(e, zone.entityId)}
     >
-      <div class="aurora one ${glow ? "on" : ""}" aria-hidden="true"></div>
-      <div class="aurora two ${glow ? "on" : ""}" aria-hidden="true"></div>
+      <div class="glow-clip" aria-hidden="true">
+        <div class="aurora one ${glow ? "on" : ""}"></div>
+        <div class="aurora two ${glow ? "on" : ""}"></div>
+      </div>
       <div class="head">
         <h2>
           <button class="link" @click=${() => this.moreInfo(zone.entityId)}>
@@ -626,9 +628,18 @@ export class HztZoneCard extends LitElement {
       overflow: hidden;
       isolation: isolate;
     }
+    /* Our own clip, the card's exact size and shape. */
+    .glow-clip {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      overflow: hidden;
+      border-radius: inherit;
+      contain: paint;
+      pointer-events: none;
+    }
     .aurora {
       position: absolute;
-      z-index: -1;
       top: -60px;
       left: -60px;
       right: -60px;
@@ -640,20 +651,23 @@ export class HztZoneCard extends LitElement {
     .aurora.on {
       opacity: 1;
     }
+    /* No filter: blur. WebKit (the HA app on Apple devices) doesn't clip
+       blurred layers inside a rounded box, so the softness comes from the
+       gradients' long falloff instead. */
     .aurora.one {
-      filter: blur(24px);
       background: radial-gradient(
-        55% 65% at 18% 40%,
-        color-mix(in srgb, var(--glow) 38%, transparent),
-        transparent 70%
+        60% 75% at 18% 40%,
+        color-mix(in srgb, var(--glow) 34%, transparent) 0%,
+        color-mix(in srgb, var(--glow) 16%, transparent) 40%,
+        transparent 80%
       );
     }
     .aurora.two {
-      filter: blur(30px);
       background: radial-gradient(
-        45% 55% at 52% 24%,
-        color-mix(in srgb, var(--glow-light) 16%, transparent),
-        transparent 70%
+        50% 65% at 52% 24%,
+        color-mix(in srgb, var(--glow-light) 14%, transparent) 0%,
+        color-mix(in srgb, var(--glow-light) 6%, transparent) 45%,
+        transparent 80%
       );
     }
     ha-card.heat {
