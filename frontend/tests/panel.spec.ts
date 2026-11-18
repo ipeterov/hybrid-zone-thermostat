@@ -120,7 +120,7 @@ test("selecting another zone shows it on the side", async ({ page }) => {
   await expect(
     side(page).getByRole("heading", { name: "Bedroom" }),
   ).toBeVisible();
-  await expect(side(page)).toContainText("between 20.0 and 21.5");
+  await expect(side(page)).toContainText("between 19.25 and 20.75");
 });
 
 test("shows a zone's state, reason and heating order", async ({ page }) => {
@@ -151,7 +151,9 @@ test("one unit doing both gets one line, not two orders", async ({ page }) => {
   await expect(side(page).getByRole("list")).toHaveCount(0);
 });
 
-test("the idle band says when cooling starts", async ({ page }) => {
+test("the idle band is centred on the target and says where", async ({
+  page,
+}) => {
   await open(page, FIXTURES["living-room"]);
 
   await side(page).getByLabel("Idle band").selectOption("2");
@@ -159,7 +161,7 @@ test("the idle band says when cooling starts", async ({ page }) => {
   await expect
     .poll(async () => (await lastSaved(page))?.zones[0]?.idle_band)
     .toBe(2);
-  await expect(side(page)).toContainText("cools above 24.0");
+  await expect(side(page)).toContainText("Heats below 21.5, cools above 23.5");
 });
 
 test("reorders the heating order", async ({ page }) => {

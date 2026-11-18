@@ -1,0 +1,15 @@
+set_idle_band:
+  target:
+    entity:
+      integration: hybrid_zone_thermostat
+      domain: climate
+  fields:
+    idle_band:
+      required: true
+      example: 1.5
+      selector:
+        number:
+          min: 0.5
+          max: 5
+          step: 0.5
+          unit_of_measurement: "°C"

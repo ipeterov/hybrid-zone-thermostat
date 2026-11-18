@@ -130,7 +130,19 @@ export function unitWord(zone: Zone, unit: ZoneUnit): string {
 }
 
 export function degrees(value: number): string {
-  return `${value.toFixed(1).replace("-", "−")} °C`;
+  return `${tenths(value)} °C`;
+}
+
+// One decimal, or two for a band edge on a quarter degree (24 ± 0.75).
+export function tenths(value: number): string {
+  const digits = Math.round(value * 100) % 10 === 0 ? 1 : 2;
+  return value.toFixed(digits).replace("-", "−");
+}
+
+// The idle band is centred on the target: heating holds its lower edge,
+// cooling its upper one.
+export function bandEdges(target: number, band: number) {
+  return { heatBelow: target - band / 2, coolAbove: target + band / 2 };
 }
 
 export function wholeDegrees(value: number): string {

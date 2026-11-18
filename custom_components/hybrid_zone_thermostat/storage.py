@@ -24,7 +24,8 @@ class ZoneConfig(TypedDict):
     name: str
     room_sensor: str | None
     target: float
-    # Heating holds `target`; cooling starts this far above it.
+    # The width of the band, centred on `target`, where nothing runs:
+    # heating holds its lower edge, cooling its upper edge.
     idle_band: float
     enabled: bool
     # Decide but send nothing to the units. On until the owner says.

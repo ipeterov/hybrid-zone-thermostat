@@ -15,7 +15,10 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+import probatio
 
 from . import HztConfigEntry
 from .control import ZoneState
@@ -27,6 +30,8 @@ from .entity import ZoneEntity
 # entity provides native_* and, on an older HA, the old names too. Drop
 # the old names once the tests run on 2026.11 (`uv run dev bump-ha`).
 NATIVE_TEMPERATURES = (MAJOR_VERSION, MINOR_VERSION) >= (2026, 11)
+
+SERVICE_SET_IDLE_BAND = "set_idle_band"
 
 _ACTIONS = {
     ZoneState.HEATING: HVACAction.HEATING,
@@ -42,6 +47,17 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     engine = entry.runtime_data
+    # The card drags the band's cooling edge; config saves are admin-only,
+    # and this is a zone's everyday setting like its target.
+    entity_platform.async_get_current_platform().async_register_entity_service(
+        SERVICE_SET_IDLE_BAND,
+        {
+            probatio.Required("idle_band"): probatio.All(
+                probatio.Coerce(float), probatio.Range(min=0.5, max=5)
+            )
+        },
+        "async_set_idle_band",
+    )
     async_add_entities(
         ZoneClimate(engine, entry.entry_id, zone["id"])
         for zone in engine.store.config["zones"]
@@ -159,6 +175,9 @@ class ZoneClimate(ZoneEntity, ClimateEntity):
             await self.engine.async_update_zone(
                 self.zone_id, target=float(temperature)
             )
+
+    async def async_set_idle_band(self, idle_band: float) -> None:
+        await self.engine.async_update_zone(self.zone_id, idle_band=idle_band)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         await self.engine.async_update_zone(

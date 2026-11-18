@@ -27,10 +27,10 @@ test("shows the room against its target, the decision and why", async ({
   await expect(living.getByText("Would heat").first()).toBeVisible();
   await expect(living).toContainText("21.4");
   await expect(living).toContainText(/CO2 Monitor Temperature\s*· \d+ s ago/);
-  await expect(living).toContainText(/Target\s*22\.0/);
+  await expect(living).toContainText(/Target\s*22\.5/);
   await expect(
     living.getByRole("img", {
-      name: /Heats below 22\.0 °C, idle up to 23\.5 °C/,
+      name: /Heats below 22\.0 °C, idle up to 23\.0 °C/,
     }),
   ).toBeVisible();
   await expect(living).toContainText("Why: 0.6 °C below 22.0");
@@ -49,12 +49,12 @@ test("the target buttons change the zone's target by half a degree", async ({
     type: "call_service",
     domain: "climate",
     service: "set_temperature",
-    data: { entity_id: "climate.living_room", temperature: 22.5 },
+    data: { entity_id: "climate.living_room", temperature: 23 },
   });
-  await expect(living).toContainText(/Target\s*22\.5/);
+  await expect(living).toContainText(/Target\s*23\.0/);
 
   await living.getByRole("button", { name: "Lower the target" }).click();
-  await expect(living).toContainText(/Target\s*22\.0/);
+  await expect(living).toContainText(/Target\s*22\.5/);
 });
 
 test("the power button turns the zone off", async ({ page }) => {
@@ -126,7 +126,8 @@ test("an off zone shows no band or reason, but its target can change", async ({
     entryway.getByText("Off", { exact: true }).first(),
   ).toBeVisible();
   await expect(entryway).not.toContainText("Why:");
-  await expect(entryway.getByRole("img")).toHaveCount(0);
+  await expect(entryway.locator(".band")).toHaveCount(0);
+  await expect(entryway.getByRole("slider")).toHaveCount(0);
   await entryway.getByRole("button", { name: "Raise the target" }).click();
   await expect(entryway).toContainText(/Target\s*18\.5/);
 });
@@ -168,7 +169,7 @@ test("changing the target moves its ticks, not the room", async ({ page }) => {
 
   await living.getByRole("button", { name: "Raise the target" }).click();
   await living.getByRole("button", { name: "Raise the target" }).click();
-  await expect(living).toContainText(/Target\s*23\.0/);
+  await expect(living).toContainText(/Target\s*23\.5/);
 
   expect((await pin.boundingBox())?.x).toBe(before?.x);
 });
@@ -180,42 +181,47 @@ function lastCall(page: Page, type: string) {
   );
 }
 
-test("clicking the card opens its zone dialog", async ({ page }) => {
+test("shows the last day against the band", async ({ page }) => {
   await openCards(page, FIXTURES["just-the-ac"]);
+  const living = card(page, "Living room");
 
-  await card(page, "Living room").getByText("Room", { exact: true }).click();
-
-  const dialog = page.getByRole("dialog", { name: "Living room" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText(/Target\s*23\.0/);
-  await expect(dialog).toContainText("Last 24 hours");
   await expect(
-    dialog.getByRole("img", { name: /Room temperature and target/ }),
+    living.getByRole("img", {
+      name: "Room temperature against the idle band over the last 24 hours",
+    }),
   ).toBeVisible();
-  expect(await lastCall(page, "more-info")).toBeUndefined();
+  await expect(living).toContainText("24 h ago");
+  expect(await lastCall(page, "history/history_during_period")).toEqual(
+    expect.objectContaining({
+      entity_ids: [
+        "climate.living_room",
+        "sensor.co2_monitor_temperature",
+        "climate.living_room_hisense_ac",
+      ],
+    }),
+  );
 });
 
-test("the zone's name opens the dialog too, and Escape closes it", async ({
+test("each unit's lane shows when its device actually ran", async ({
   page,
 }) => {
+  await openCards(page, FIXTURES.heater);
+  const living = card(page, "Living room");
+
+  // The harness's day: the AC cools, then heats; the heater joins late.
+  await expect(
+    living.getByRole("img", { name: /^Hisense AC: cooling .*, heating / }),
+  ).toBeVisible();
+  await expect(
+    living.getByRole("img", { name: /^Heater plug: heating [^,]+–now$/ }),
+  ).toBeVisible();
+});
+
+test("the zone's name opens HA's own dialog", async ({ page }) => {
   await openCards(page, FIXTURES["just-the-ac"]);
 
   await card(page, "Living room")
     .getByRole("button", { name: "Living room", exact: true })
-    .click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-});
-
-test("the dialog leads on to HA's own dialog", async ({ page }) => {
-  await openCards(page, FIXTURES["just-the-ac"]);
-  await card(page, "Living room").getByText("Room", { exact: true }).click();
-
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "History and settings in Home Assistant" })
     .click();
 
   expect(await lastCall(page, "more-info")).toEqual({
@@ -224,16 +230,104 @@ test("the dialog leads on to HA's own dialog", async ({ page }) => {
   });
 });
 
-test("the dialog's controls work like the card's", async ({ page }) => {
-  await openCards(page, FIXTURES["just-the-ac"]);
-  await card(page, "Living room").getByText("Room", { exact: true }).click();
-  const dialog = page.getByRole("dialog");
+// The x of `degrees` on the living room's band, whose scale is 16 to 30.
+async function bandX(page: Page, degrees: number) {
+  const track = await card(page, "Living room")
+    .locator(".band-track")
+    .boundingBox();
+  if (!track) {
+    throw new Error("No band");
+  }
+  return {
+    x: track.x + ((degrees - 16) / 14) * track.width,
+    y: track.y + track.height / 2,
+  };
+}
 
-  await dialog.getByRole("button", { name: "Raise the target" }).click();
+test("dragging the target moves the band, and sends once on release", async ({
+  page,
+}) => {
+  await openCards(page, FIXTURES["living-room"]);
+  const living = card(page, "Living room");
+  const knob = living.getByRole("slider", { name: "Target" });
+  const from = await bandX(page, 22.5);
+  const to = await bandX(page, 24.1);
 
-  await expect(dialog).toContainText(/Target\s*23\.5/);
-  await dialog.getByRole("button", { name: "Close" }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+
+  await expect(living).toContainText(/Target\s*24\.0/);
+  await expect(knob).toHaveAttribute("aria-valuetext", "Target 24.0 °C");
+  await expect(
+    living.getByRole("slider", { name: "Heating starts below" }),
+  ).toHaveText(/Heats below\s*23\.5/);
+  expect(await lastService(page)).toBeUndefined();
+
+  await page.mouse.up();
+
+  expect(await lastService(page)).toEqual({
+    type: "call_service",
+    domain: "climate",
+    service: "set_temperature",
+    data: { entity_id: "climate.living_room", temperature: 24 },
+  });
+  await expect(living).toContainText(/Target\s*24\.0/);
+});
+
+test("dragging an edge widens the band around the target", async ({ page }) => {
+  await openCards(page, FIXTURES["living-room"]);
+  const living = card(page, "Living room");
+  const edge = living.getByRole("slider", { name: "Cooling starts above" });
+  const box = await edge.boundingBox();
+  if (!box) {
+    throw new Error("No edge");
+  }
+  // Grabbed by its label, which hangs right of the edge: it mustn't jump.
+  const grab = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  const step = (await bandX(page, 1)).x - (await bandX(page, 0)).x;
+
+  await page.mouse.move(grab.x, grab.y);
+  await page.mouse.down();
+  await page.mouse.move(grab.x + step * 0.1, grab.y);
+  await expect(edge).toHaveText(/Cools above\s*23\.0/);
+  await page.mouse.move(grab.x + step * 0.5, grab.y, { steps: 4 });
+  await page.mouse.up();
+
+  await expect(edge).toHaveText(/Cools above\s*23\.5/);
+  await expect(
+    living.getByRole("slider", { name: "Heating starts below" }),
+  ).toHaveText(/Heats below\s*21\.5/);
+  expect(await lastService(page)).toEqual({
+    type: "call_service",
+    domain: "hybrid_zone_thermostat",
+    service: "set_idle_band",
+    data: { entity_id: "climate.living_room", idle_band: 2 },
+  });
+});
+
+test("arrow keys move the target and the band's edges", async ({ page }) => {
+  await openCards(page, FIXTURES["living-room"]);
+  const living = card(page, "Living room");
+
+  await living.getByRole("slider", { name: "Target" }).focus();
+  await page.keyboard.press("ArrowLeft");
+  expect((await lastService(page))?.data).toEqual({
+    entity_id: "climate.living_room",
+    temperature: 22,
+  });
+
+  await living.getByRole("slider", { name: "Heating starts below" }).focus();
+  await page.keyboard.press("ArrowLeft");
+  expect((await lastService(page))?.data).toEqual({
+    entity_id: "climate.living_room",
+    idle_band: 1.5,
+  });
+  await expect(
+    living.getByRole("img", {
+      name: /Heats below 21\.25 °C, idle up to 22\.75 °C/,
+    }),
+  ).toBeVisible();
 });
 
 test("the unit and the room sensor open their own entities", async ({
@@ -374,13 +468,4 @@ test("idle, no order applies", async ({ page }) => {
 
   await expect(living.locator("h3")).toHaveText("Room units");
   await expect(living.locator(".rank")).toHaveText(["", ""]);
-});
-
-test("opening the dialog focuses Close, not a control", async ({ page }) => {
-  await openCards(page, FIXTURES["just-the-ac"]);
-  await card(page, "Living room").getByText("Room", { exact: true }).click();
-
-  await expect(
-    page.getByRole("dialog").getByRole("button", { name: "Close" }),
-  ).toBeFocused();
 });

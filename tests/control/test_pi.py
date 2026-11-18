@@ -22,7 +22,8 @@ UNITS = {
 def zone(
     temperature: float | None,
     *,
-    target: float = 22.0,
+    # With the 1.5 band centred on it: heats below 22.0, cools above 23.5.
+    target: float = 22.75,
     enabled: bool = True,
     units: dict[str, UnitSnapshot] | None = None,
 ) -> ZoneSnapshot:
@@ -84,6 +85,29 @@ def test_idle_band_runs_nothing():
     assert all(d.mode is None for d in decision.demands.values())
 
 
+@pytest.mark.parametrize(
+    ("temperature", "state"),
+    [
+        (21.2, ZoneState.HEATING),
+        (21.3, ZoneState.IDLE),
+        (22.7, ZoneState.IDLE),
+        (22.8, ZoneState.COOLING),
+    ],
+)
+def test_the_band_is_centred_on_the_target(
+    temperature: float, state: ZoneState
+):
+    decision = decide(PIController(), zone(temperature, target=22.0), T0)
+
+    assert decision.state is state
+
+
+def test_a_quarter_degree_edge_is_said_as_it_is():
+    decision = decide(PIController(), zone(22.0, target=22.0), T0)
+
+    assert "between 21.25 and 22.75" in decision.reason
+
+
 def test_above_the_band_cools_with_the_cooling_order():
     decision = decide(PIController(), zone(24.0), T0)
 
@@ -112,7 +136,7 @@ def test_locked_out_unit_is_skipped_and_the_next_moves_up():
 
     assert decision.demands["ac"].mode is None
     assert decision.demands["radiator"].mode is Mode.HEAT
-    assert "#1 radiator" in decision.reason
+    assert decision.reason == "0.4 °C below 22.0: heating with radiator at 20%."
 
 
 def test_no_room_temperature_holds_everything_off():
@@ -147,7 +171,9 @@ def test_cooling_keeps_going_at_minimum_just_below_the_edge():
         assert decision.demands["ac"].mode is Mode.COOL
 
     assert decision.demands["ac"].level == 0.0
-    assert "at its minimum until 23.2" in decision.reason
+    assert decision.reason == (
+        "23.4 °C, just past 23.5: ac keeps cooling at its minimum until 23.2."
+    )
 
 
 def test_cooling_stops_past_the_differential():

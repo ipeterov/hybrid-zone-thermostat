@@ -216,7 +216,9 @@ const LIVING_ROOM_ZONE = zone({
   id: "living_room",
   name: "Living room",
   room_sensor: "sensor.co2_monitor_temperature",
-  target: 22,
+  // Heats below 22.0, cools above 23.0.
+  target: 22.5,
+  idle_band: 1,
   heating_order: ["hisense_ac", "living_room_radiator"],
   cooling_order: ["hisense_ac"],
 });
@@ -231,8 +233,8 @@ export const LIVING_ROOM: HouseConfig = {
 const LIVING_ROOM_STATUS = zoneStatus(LIVING_ROOM, "living_room", {
   zone_state: "heating",
   current_temperature: 21.4,
-  temperature: 22,
-  reason: "0.6 °C below 22.0, demand 30%: #1 Hisense AC.",
+  temperature: 22.5,
+  reason: "0.6 °C below 22.0: heating with Hisense AC at 60%.",
   demands: {
     hisense_ac: { mode: "heat", level: 0.6 },
     living_room_radiator: { mode: null, level: 0 },
@@ -251,7 +253,7 @@ const JUST_THE_AC_STATUS = zoneStatus(JUST_THE_AC, "living_room", {
   zone_state: "cooling",
   current_temperature: 27.6,
   temperature: 23,
-  reason: "3.1 °C above 24.5, demand 100%: #1 Hisense AC.",
+  reason: "4.1 °C above 23.5: cooling with Hisense AC at 100%.",
   demands: { hisense_ac: { mode: "cool", level: 1 } },
 });
 
@@ -301,7 +303,7 @@ const HOUSE_STATES = [
     zone_state: "idle",
     current_temperature: 19.8,
     temperature: 20,
-    reason: "19.8 °C is between 20.0 and 21.5: nothing needs to run.",
+    reason: "19.8 °C is between 19.25 and 20.75: nothing needs to run.",
     demands: { bedroom_radiator: { mode: null, level: 0 } },
   }),
   zoneStatus(HOUSE, "entryway", {
@@ -393,7 +395,7 @@ export const FIXTURES: Record<string, Fixture> = {
           current_temperature: 21.4,
           temperature: 23,
           reason:
-            "1.6 °C below 23.0, demand 80%: #1 Hisense AC, #2 Heater plug.",
+            "1.1 °C below 22.5: heating with Hisense AC at 100% and Heater plug at 60%.",
           demands: {
             hisense_ac: { mode: "heat", level: 1 },
             heater_plug: { mode: "heat", level: 0.6 },
@@ -414,8 +416,8 @@ export const FIXTURES: Record<string, Fixture> = {
       zoneStatus(LIVING_ROOM, "living_room", {
         zone_state: "heating",
         current_temperature: 20.9,
-        temperature: 22,
-        reason: "1.1 °C below 22.0, demand 55%: #1 Living room radiator.",
+        temperature: 22.5,
+        reason: "1.1 °C below 22.0: heating with Living room radiator at 55%.",
         demands: {
           hisense_ac: { mode: null, level: 0 },
           living_room_radiator: { mode: "heat", level: 0.55 },

@@ -23,5 +23,17 @@
         "name": "Reason"
       }
     }
+  },
+  "services": {
+    "set_idle_band": {
+      "name": "Set idle band",
+      "description": "The width of the band, centred on the target, where nothing runs. Heating starts below it, cooling above it.",
+      "fields": {
+        "idle_band": {
+          "name": "Idle band",
+          "description": "Its width in °C: 1.5 around a 24 °C target is 23.25 to 24.75."
+        }
+      }
+    }
   }
 }

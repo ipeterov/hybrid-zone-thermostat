@@ -30,7 +30,7 @@ async def test_a_cold_room_would_heat_with_the_first_unit(
     assert state is not None
     assert state.state == HVACMode.HEAT_COOL
     assert state.attributes["current_temperature"] == 21.4
-    assert state.attributes[ATTR_TEMPERATURE] == 22.0
+    assert state.attributes[ATTR_TEMPERATURE] == 22.5
     assert state.attributes["zone_state"] == "heating"
     assert state.attributes["demands"]["ac"]["mode"] == "heat"
     assert state.attributes["demands"]["radiator"]["mode"] is None
@@ -46,7 +46,7 @@ async def test_shadow_mode_claims_no_action_and_says_why(
     assert state.attributes["shadow"] is True
     reason = hass.states.get(REASON).state
     assert reason.startswith("Shadow mode, nothing sent.")
-    assert "#1 Hisense AC" in reason
+    assert "heating with Hisense AC at" in reason
 
 
 async def test_a_sensor_change_decides_again(
@@ -92,6 +92,33 @@ async def test_setting_the_target_is_kept(
     assert hass.states.get(DECISION).state == "idle"
     stored = hass_storage[STORAGE_KEY]["data"]["zones"][0]
     assert stored["target"] == 21.0
+
+
+async def test_setting_the_idle_band_is_kept(
+    hass: HomeAssistant, entry: MockConfigEntry, hass_storage: dict[str, Any]
+):
+    await hass.services.async_call(
+        DOMAIN,
+        "set_idle_band",
+        {ATTR_ENTITY_ID: CLIMATE, "idle_band": 2.5},
+        blocking=True,
+    )
+
+    assert hass.states.get(CLIMATE).attributes["idle_band"] == 2.5
+    stored = hass_storage[STORAGE_KEY]["data"]["zones"][0]
+    assert stored["idle_band"] == 2.5
+
+
+async def test_the_idle_band_has_limits(
+    hass: HomeAssistant, entry: MockConfigEntry
+):
+    with pytest.raises(Exception, match="idle_band"):
+        await hass.services.async_call(
+            DOMAIN,
+            "set_idle_band",
+            {ATTR_ENTITY_ID: CLIMATE, "idle_band": 0.1},
+            blocking=True,
+        )
 
 
 async def test_turning_the_zone_off(

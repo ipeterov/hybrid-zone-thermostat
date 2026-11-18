@@ -22,6 +22,7 @@ import {
   type Zone,
 } from "./hass";
 import { panelStyles } from "./panel-styles";
+import { bandEdges, tenths } from "./zone";
 
 // Map geometry, in px: a column each for central units, room units and
 // zones, a row per room unit (docs/design/panel-system-map.html). Columns
@@ -679,7 +680,7 @@ export class HztPanel extends LitElement {
     const status = this.status(zone.id);
     const word = stateWord(status);
     const units = unitsOf(config, zone.id);
-    const coolFrom = (zone.target + zone.idle_band).toFixed(1);
+    const { heatBelow, coolAbove } = bandEdges(zone.target, zone.idle_band);
     return html`<div class="side-head">
         <span class="eyebrow">Zone</span>
         <div class="title-row">
@@ -730,11 +731,11 @@ export class HztPanel extends LitElement {
                   value=${band}
                   ?selected=${band === zone.idle_band}
                 >
-                  +${band.toFixed(1)} °C
+                  ±${tenths(band / 2)} °C
                 </option>`,
             )}
           </select>
-          <small>Heats below ${zone.target.toFixed(1)}, cools above ${coolFrom}</small>
+          <small>Heats below ${tenths(heatBelow)}, cools above ${tenths(coolAbove)}</small>
         </label>
         <div class="fact">
           <span>Target</span>

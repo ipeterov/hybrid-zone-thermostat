@@ -52,12 +52,22 @@ class ZoneSnapshot:
     enabled: bool
     room_temperature: float | None
     target: float
-    # Heating holds the target; cooling starts this far above it.
+    # The width of the band, centred on the target, where nothing runs.
     idle_band: float
     # Unit ids, first choice first. A unit may be in both orders.
     heating_order: tuple[str, ...]
     cooling_order: tuple[str, ...]
     units: Mapping[str, UnitSnapshot]
+
+    @property
+    def heat_setpoint(self) -> float:
+        """Heating holds the band's lower edge."""
+        return self.target - self.idle_band / 2
+
+    @property
+    def cool_setpoint(self) -> float:
+        """Cooling holds the band's upper edge."""
+        return self.target + self.idle_band / 2
 
 
 @dataclass(frozen=True, slots=True)

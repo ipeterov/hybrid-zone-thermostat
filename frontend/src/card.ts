@@ -2,9 +2,11 @@ import { css, html, LitElement, nothing, svg } from "lit";
 
 import { friendlyName, type Hass, type HassEntity } from "./hass";
 import {
+  bandEdges,
   degrees,
   isZone,
   readZone,
+  tenths,
   unitWord,
   wholeDegrees,
   type Zone,
@@ -17,17 +19,83 @@ interface ZoneCardConfig {
   entity: string;
 }
 
+// The zone's own limits (climate.py: target step and range; the
+// set_idle_band service's range).
 const STEP = 0.5;
+const MIN_TARGET = 5;
+const MAX_TARGET = 35;
+const MIN_BAND = 0.5;
+const MAX_BAND = 5;
+
+// The band's scale, fixed so that changing the target moves its handles,
+// not the room. Widened only when something falls outside it.
+const BAND_LOW = 16;
+const BAND_HIGH = 30;
+
 const HISTORY_HOURS = 24;
+const HISTORY_REFRESH_MS = 5 * 60_000;
+// How long a value the card sent is shown before HA confirms it.
+const PENDING_MS = 5000;
 
 interface HistoryPoint {
   time: number;
   room?: number;
   target?: number;
+  band?: number;
   state?: string;
 }
-const BAND_LOW = 16;
-const BAND_HIGH = 30;
+
+// When a room unit's device was actually heating or cooling.
+type UnitActivity = { time: number; mode: "heat" | "cool" | null }[];
+
+// What a device row says it's doing: a climate entity's action (its mode
+// when it reports no action), a switch's or light's on.
+function deviceMode(
+  unit: ZoneUnit,
+  state: string | undefined,
+  attributes: Record<string, unknown>,
+): "heat" | "cool" | null {
+  if (unit.kind === "switch") {
+    return state === "on" ? "heat" : null;
+  }
+  const action = attributes.hvac_action;
+  if (typeof action === "string") {
+    return action === "heating" ? "heat" : action === "cooling" ? "cool" : null;
+  }
+  return state === "heat" ? "heat" : state === "cool" ? "cool" : null;
+}
+
+// The band's three handles: the target, and the idle band's two edges,
+// which move together, symmetric about the target.
+type Handle = "target" | "low" | "high";
+
+interface Drag {
+  handle: Handle;
+  target: number;
+  band: number;
+  // The scale, frozen while dragging so it doesn't move under the finger.
+  low: number;
+  high: number;
+  // Degrees between where the handle was grabbed and its value, so it
+  // doesn't jump to the pointer (an edge's label hangs beside its edge).
+  grab: number;
+}
+
+interface Settings {
+  target: number;
+  band: number;
+}
+
+function clock(time: number): string {
+  return new Date(time).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function clamp(value: number, low: number, high: number): number {
+  return Math.min(Math.max(value, low), high);
+}
 
 function ago(isoTime: string | undefined, now: number): string | undefined {
   if (!isoTime) {
@@ -44,20 +112,28 @@ function ago(isoTime: string | undefined, now: number): string | undefined {
 }
 
 // The dashboard card for one zone (docs/design/dashboard-zone-card.html):
-// the room against its target, what HZT decided and why, and its room
-// units with the controls that stay the user's (fan, swing).
+// the room against its target and band, the last day, what HZT decided and
+// why, and its room units with the controls that stay the user's.
 export class HztZoneCard extends LitElement {
   static properties = {
     hass: { attribute: false },
     config: { state: true },
-    dialogOpen: { state: true },
     history: { state: true },
+    unitHistory: { state: true },
+    drag: { state: true },
+    pending: { state: true },
   };
 
   hass?: Hass;
   config?: ZoneCardConfig;
-  dialogOpen = false;
   history?: HistoryPoint[];
+  unitHistory: Record<string, UnitActivity> = {};
+  drag?: Drag;
+  // What the card last sent, shown until HA's state catches up.
+  pending?: Settings & { until: number };
+
+  private historyTimer?: number;
+  private historyKey?: string;
 
   static getStubConfig(hass: Hass): ZoneCardConfig {
     const zone = Object.values(hass.states).find((e) => isZone(e));
@@ -72,11 +148,53 @@ export class HztZoneCard extends LitElement {
   }
 
   getCardSize(): number {
-    return 6;
+    return 8;
   }
 
   getGridOptions() {
     return { columns: 12, min_columns: 6 };
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.clearInterval(this.historyTimer);
+    this.historyTimer = undefined;
+    this.historyKey = undefined;
+  }
+
+  private get zone(): Zone | undefined {
+    const entity = this.config && this.hass?.states[this.config.entity];
+    return isZone(entity) ? readZone(entity as HassEntity) : undefined;
+  }
+
+  protected willUpdate(): void {
+    const zone = this.zone;
+    if (this.pending && zone) {
+      const confirmed =
+        zone.target === this.pending.target &&
+        zone.idleBand === this.pending.band;
+      if (confirmed || Date.now() > this.pending.until) {
+        this.pending = undefined;
+      }
+    }
+  }
+
+  protected updated(): void {
+    // The history is fetched when the card appears, every few minutes,
+    // and again once a new target or band is in HA's state.
+    const zone = this.zone;
+    if (!(zone && this.isConnected)) {
+      return;
+    }
+    const key = `${zone.entityId}|${zone.target}|${zone.idleBand}`;
+    if (key !== this.historyKey) {
+      this.historyKey = key;
+      this.loadHistory();
+    }
+    this.historyTimer ??= window.setInterval(
+      () => this.loadHistory(),
+      HISTORY_REFRESH_MS,
+    );
   }
 
   // HA's conventions: a card opens the entity's more-info dialog, and
@@ -98,49 +216,18 @@ export class HztZoneCard extends LitElement {
     );
   }
 
-  // A click anywhere on the card that isn't on one of its controls opens
-  // the zone's dialog, as tile and thermostat cards open more-info.
-  private onCardClick(event: MouseEvent) {
-    const interactive = event
-      .composedPath()
-      .some(
-        (node) =>
-          node instanceof HTMLElement &&
-          ["BUTTON", "SELECT", "A", "LABEL", "OPTION"].includes(node.tagName),
-      );
-    if (!interactive) {
-      this.openDialog();
-    }
-  }
-
-  private openDialog() {
-    this.dialogOpen = true;
-    this.history = undefined;
-    this.loadHistory();
-  }
-
-  private closeDialog() {
-    this.dialogOpen = false;
-  }
-
-  protected updated(): void {
-    const dialog = this.renderRoot.querySelector("dialog");
-    if (dialog && this.dialogOpen && !dialog.open) {
-      dialog.showModal();
-    }
-  }
-
-  // The zone's last 24 hours from the recorder: room, target, state.
+  // The zone's last 24 hours from the recorder: room, target, band, state,
+  // and what each room unit's device did.
   private async loadHistory() {
-    if (!(this.hass && this.config)) {
+    const zone = this.zone;
+    if (!(this.hass && zone)) {
       return;
     }
-    const entityId = this.config.entity;
+    const entityId = zone.entityId;
     // The room line comes from the room sensor, whose history is usually
-    // longer than the zone's; target and state from the zone.
-    const sensor = readZone(
-      this.hass.states[entityId] as HassEntity,
-    ).roomSensor;
+    // longer than the zone's; the rest from the zone.
+    const sensor = zone.roomSensor;
+    const devices = zone.units.map((u) => u.entity_id);
     const start = new Date(Date.now() - HISTORY_HOURS * 3600_000);
     try {
       const result = await this.hass.callWS<
@@ -151,22 +238,21 @@ export class HztZoneCard extends LitElement {
       >({
         type: "history/history_during_period",
         start_time: start.toISOString(),
-        entity_ids: sensor ? [entityId, sensor] : [entityId],
+        entity_ids: [entityId, ...(sensor ? [sensor] : []), ...devices],
         minimal_response: false,
         no_attributes: false,
         significant_changes_only: false,
       });
       let last: Record<string, unknown> = {};
+      const number = (value: unknown) =>
+        typeof value === "number" ? value : undefined;
       const zonePoints: HistoryPoint[] = (result[entityId] ?? []).map((row) => {
         last = row.a ?? last;
         return {
           time: row.lu * 1000,
-          room:
-            !sensor && typeof last.current_temperature === "number"
-              ? last.current_temperature
-              : undefined,
-          target:
-            typeof last.temperature === "number" ? last.temperature : undefined,
+          room: sensor ? undefined : number(last.current_temperature),
+          target: number(last.temperature),
+          band: number(last.idle_band),
           state: typeof last.zone_state === "string" ? last.zone_state : "idle",
         };
       });
@@ -181,8 +267,26 @@ export class HztZoneCard extends LitElement {
       this.history = [...zonePoints, ...roomPoints].sort(
         (a, b) => a.time - b.time,
       );
+      this.unitHistory = Object.fromEntries(
+        zone.units.map((unit) => {
+          let attributes: Record<string, unknown> = {};
+          let state: string | undefined;
+          return [
+            unit.id,
+            (result[unit.entity_id] ?? []).map((row) => {
+              attributes = row.a ?? attributes;
+              state = row.s ?? state;
+              return {
+                time: row.lu * 1000,
+                mode: deviceMode(unit, state, attributes),
+              };
+            }),
+          ];
+        }),
+      );
     } catch {
       this.history = [];
+      this.unitHistory = {};
     }
   }
 
@@ -198,201 +302,181 @@ export class HztZoneCard extends LitElement {
     return this.hass?.callService(domain, service, data);
   }
 
+  // ---- Target and band ---------------------------------------------------
+
+  // What the band shows: the drag in progress, else what was just sent,
+  // else HA's state.
+  private settings(zone: Zone): Settings | undefined {
+    if (this.drag) {
+      return { target: this.drag.target, band: this.drag.band };
+    }
+    if (this.pending) {
+      return { target: this.pending.target, band: this.pending.band };
+    }
+    return zone.target === undefined
+      ? undefined
+      : { target: zone.target, band: zone.idleBand };
+  }
+
+  private scale(zone: Zone, { target, band }: Settings) {
+    if (this.drag) {
+      return { low: this.drag.low, high: this.drag.high };
+    }
+    const room = zone.room ?? target;
+    return {
+      low: Math.floor(Math.min(BAND_LOW, target - band / 2 - 1, room - 1)),
+      high: Math.ceil(Math.max(BAND_HIGH, target + band / 2 + 1, room + 1)),
+    };
+  }
+
+  private commit(zone: Zone, { target, band }: Settings) {
+    const changedTarget = target !== zone.target;
+    const changedBand = band !== zone.idleBand;
+    if (!(changedTarget || changedBand)) {
+      return;
+    }
+    this.pending = { target, band, until: Date.now() + PENDING_MS };
+    if (changedTarget) {
+      this.call("set_temperature", {
+        entity_id: zone.entityId,
+        temperature: target,
+      });
+    }
+    if (changedBand) {
+      this.call(
+        "set_idle_band",
+        { entity_id: zone.entityId, idle_band: band },
+        "hybrid_zone_thermostat",
+      );
+    }
+  }
+
+  // Where a handle would put things with the pointer at `t` degrees.
+  private dragTo(drag: Drag, t: number): Settings {
+    if (drag.handle === "target") {
+      const half = drag.band / 2;
+      return {
+        target: clamp(
+          Math.round(t / STEP) * STEP,
+          Math.max(MIN_TARGET, drag.low + half),
+          Math.min(MAX_TARGET, drag.high - half),
+        ),
+        band: drag.band,
+      };
+    }
+    // An edge: the band widens or narrows around the target, in half
+    // degrees, so each edge moves in quarters.
+    const room = 2 * Math.min(drag.target - drag.low, drag.high - drag.target);
+    return {
+      target: drag.target,
+      band: clamp(
+        Math.round((2 * Math.abs(t - drag.target)) / STEP) * STEP,
+        MIN_BAND,
+        Math.min(MAX_BAND, room),
+      ),
+    };
+  }
+
+  private startDrag(event: PointerEvent, handle: Handle) {
+    const zone = this.zone;
+    const settings = zone && this.settings(zone);
+    if (!(zone && settings) || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    (event.currentTarget as HTMLElement).focus();
+    const scale = this.scale(zone, settings);
+    const { heatBelow, coolAbove } = bandEdges(settings.target, settings.band);
+    const value = { target: settings.target, low: heatBelow, high: coolAbove }[
+      handle
+    ];
+    const pointer = this.pointerDegrees(event, scale.low, scale.high);
+    this.drag = {
+      handle,
+      ...settings,
+      ...scale,
+      grab: pointer === undefined ? 0 : pointer - value,
+    };
+  }
+
+  private pointerDegrees(event: PointerEvent, low: number, high: number) {
+    const track = this.renderRoot.querySelector(".band-track");
+    if (!track) {
+      return undefined;
+    }
+    const rect = track.getBoundingClientRect();
+    return low + ((event.clientX - rect.left) / rect.width) * (high - low);
+  }
+
+  private moveDrag(event: PointerEvent) {
+    const drag = this.drag;
+    const pointer = drag && this.pointerDegrees(event, drag.low, drag.high);
+    if (!(drag && pointer !== undefined)) {
+      return;
+    }
+    const next = this.dragTo(drag, pointer - drag.grab);
+    if (next.target !== drag.target || next.band !== drag.band) {
+      this.drag = { ...drag, ...next };
+    }
+  }
+
+  private endDrag(event: PointerEvent) {
+    const drag = this.drag;
+    const zone = this.zone;
+    this.drag = undefined;
+    if (drag && zone && event.type === "pointerup") {
+      this.commit(zone, drag);
+    }
+  }
+
+  // Arrow keys step a handle; for an edge, outward widens the band.
+  private onHandleKey(event: KeyboardEvent, handle: Handle) {
+    const zone = this.zone;
+    const settings = zone && this.settings(zone);
+    const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[
+      event.key
+    ];
+    if (!(zone && settings && step)) {
+      return;
+    }
+    event.preventDefault();
+    if (handle === "target") {
+      this.commit(zone, {
+        ...settings,
+        target: clamp(settings.target + step * STEP, MIN_TARGET, MAX_TARGET),
+      });
+    } else {
+      const outward = handle === "high" ? step : -step;
+      this.commit(zone, {
+        ...settings,
+        band: clamp(settings.band + outward * STEP, MIN_BAND, MAX_BAND),
+      });
+    }
+  }
+
+  // ---- Rendering ---------------------------------------------------------
+
   protected render() {
     if (!(this.hass && this.config)) {
       return nothing;
     }
-    const entity = this.hass.states[this.config.entity];
-    if (!isZone(entity)) {
+    const zone = this.zone;
+    if (!zone) {
       return html`<ha-card class="missing">
         <p role="alert">
           ${this.config.entity} isn’t a Hybrid Zone Thermostat zone.
         </p>
       </ha-card>`;
     }
-    const zone = readZone(entity as HassEntity);
     const glow = this.runningMode(zone);
-    return html`<ha-card class=${glow ?? ""} @click=${this.onCardClick}>
-        ${this.renderGlow(glow)} ${this.renderBody(zone, false)}
-      </ha-card>
-      ${this.dialogOpen ? this.renderDialog(zone, glow) : nothing}`;
-  }
-
-  private renderGlow(glow: "heat" | "cool" | undefined) {
-    return html`<div class="glow-clip" aria-hidden="true">
-      <div class="aurora one ${glow ? "on" : ""}"></div>
-      <div class="aurora two ${glow ? "on" : ""}"></div>
-    </div>`;
-  }
-
-  // The zone in our own dialog: what HA's thermostat dialog shows, in
-  // HZT's terms, with the last day and a way on to HA's own dialog.
-  private renderDialog(zone: Zone, glow: "heat" | "cool" | undefined) {
-    return html`<dialog
-      class="zone-dialog ${glow ?? ""}"
-      aria-label=${zone.name}
-      @close=${this.closeDialog}
-      @click=${(e: MouseEvent) => {
-        // A click on the backdrop (the dialog itself, outside its box).
-        if (e.target === e.currentTarget) {
-          (e.currentTarget as HTMLDialogElement).close();
-        }
-      }}
-    >
-      <div class="dialog-box">
-        ${this.renderGlow(glow)} ${this.renderBody(zone, true)}
-        <section class="history">
-          <h3 class="eyebrow">Last ${HISTORY_HOURS} hours</h3>
-          ${this.renderHistory()}
-        </section>
-        <div class="dialog-foot">
-          <button class="link more" @click=${() => this.moreInfo(zone.entityId)}>
-            History and settings in Home Assistant
-          </button>
-        </div>
+    return html`<ha-card class=${glow ?? ""}>
+      <div class="glow-clip" aria-hidden="true">
+        <div class="aurora one ${glow ? "on" : ""}"></div>
+        <div class="aurora two ${glow ? "on" : ""}"></div>
       </div>
-    </dialog>`;
-  }
-
-  private renderHistory() {
-    const points = this.history;
-    if (points === undefined) {
-      return html`<p class="small">Loading…</p>`;
-    }
-    const usable = points.filter((p) => p.room !== undefined);
-    if (usable.length < 2) {
-      return html`<p class="small">Not enough history yet.</p>`;
-    }
-    const width = 520;
-    const height = 120;
-    const now = Date.now();
-    const from = now - HISTORY_HOURS * 3600_000;
-    const temps = points.flatMap((p) =>
-      [p.room, p.target].filter((v): v is number => v !== undefined),
-    );
-    const low = Math.floor(Math.min(...temps) - 0.5);
-    const high = Math.ceil(Math.max(...temps) + 0.5);
-    const x = (time: number) =>
-      ((Math.max(time, from) - from) / (now - from)) * width;
-    const y = (value: number) =>
-      height - ((value - low) / (high - low)) * height;
-    // The target steps; the room is measured, so it's a line.
-    const path = (key: "room" | "target", stepped: boolean) => {
-      let d = "";
-      let previous: number | undefined;
-      for (const p of points) {
-        const value = p[key];
-        if (value === undefined) {
-          continue;
-        }
-        if (previous === undefined) {
-          d = `M${x(p.time)} ${y(value)}`;
-        } else if (stepped) {
-          d += ` H${x(p.time)} V${y(value)}`;
-        } else {
-          d += ` L${x(p.time)} ${y(value)}`;
-        }
-        previous = value;
-      }
-      return previous === undefined ? "" : `${d} H${width}`;
-    };
-    const zonePoints = points.filter((p) => p.state !== undefined);
-    const bands = zonePoints.map((p, i) => {
-      const next = zonePoints[i + 1]?.time ?? now;
-      if (p.state !== "heating" && p.state !== "cooling") {
-        return nothing;
-      }
-      return svg`<rect
-        class=${p.state === "heating" ? "h-heat" : "h-cool"}
-        x=${x(p.time)}
-        y="0"
-        width=${Math.max(0, x(next) - x(p.time))}
-        height=${height}
-      ></rect>`;
-    });
-    return html`<svg
-        class="chart"
-        viewBox="0 0 ${width} ${height}"
-        preserveAspectRatio="none"
-        role="img"
-        aria-label="Room temperature and target over the last ${HISTORY_HOURS} hours"
-      >
-        ${bands}
-        <path class="h-target" d=${path("target", true)}></path>
-        <path class="h-room" d=${path("room", false)}></path>
-      </svg>
-      <div class="chart-scale">
-        <span>${HISTORY_HOURS} h ago</span>
-        <span>${low}–${high} °C</span>
-        <span>now</span>
-      </div>
-      <p class="legend">
-        <span><span class="swatch room"></span>room</span>
-        <span><span class="swatch target"></span>target</span>
-        <span><span class="swatch heat"></span>heating</span>
-        <span><span class="swatch cool"></span>cooling</span>
-      </p>`;
-  }
-
-  private renderBody(zone: Zone, inDialog: boolean) {
-    const word = zoneWord(zone);
-    return html`<div class="head">
-        <h2>
-          ${
-            inDialog
-              ? zone.name
-              : html`<button class="link" @click=${() => this.openDialog()}>
-                ${zone.name}
-              </button>`
-          }
-        </h2>
-        ${word ? html`<span class="chip ${zone.state ?? ""}">${word}</span>` : nothing}
-        <button
-          class="icon power ${zone.enabled ? "on" : ""}"
-          aria-label=${zone.enabled ? `Turn ${zone.name} off` : `Turn ${zone.name} on`}
-          aria-pressed=${zone.enabled ? "true" : "false"}
-          @click=${() =>
-            this.call(zone.enabled ? "turn_off" : "turn_on", {
-              entity_id: zone.entityId,
-            })}
-        >
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-            <path d="M12 3v8M6.3 7.3a8 8 0 1 0 11.4 0" />
-          </svg>
-        </button>
-        <a
-          class="icon settings"
-          href=${this.settingsPath(zone)}
-          aria-label="${zone.name} settings"
-          @click=${(e: MouseEvent) => {
-            e.preventDefault();
-            this.navigate(this.settingsPath(zone));
-          }}
-        >
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-            <circle cx="12" cy="12" r="3" />
-            <path
-              d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"
-            />
-          </svg>
-        </a>
-        ${
-          inDialog
-            ? html`<button
-              class="icon close"
-              aria-label="Close"
-              autofocus
-              @click=${(e: MouseEvent) =>
-                (e.currentTarget as HTMLElement).closest("dialog")?.close()}
-            >
-              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
-            </button>`
-            : nothing
-        }
-      </div>
-      ${this.renderNumbers(zone)} ${this.renderBand(zone)}
+      ${this.renderHead(zone)} ${this.renderNumbers(zone)}
+      ${this.renderBand(zone)} ${this.renderHistory(zone)}
       ${
         zone.reason && zone.state !== "off"
           ? html`<p class="reason"><strong>Why:</strong> ${zone.reason}</p>`
@@ -413,7 +497,49 @@ export class HztZoneCard extends LitElement {
           </p>`
           : nothing
       }
-      ${this.renderUnits(zone)}`;
+      ${this.renderUnits(zone)}
+    </ha-card>`;
+  }
+
+  private renderHead(zone: Zone) {
+    const word = zoneWord(zone);
+    return html`<div class="head">
+      <h2>
+        <button class="link" @click=${() => this.moreInfo(zone.entityId)}>
+          ${zone.name}
+        </button>
+      </h2>
+      ${word ? html`<span class="chip ${zone.state ?? ""}">${word}</span>` : nothing}
+      <button
+        class="icon power ${zone.enabled ? "on" : ""}"
+        aria-label=${zone.enabled ? `Turn ${zone.name} off` : `Turn ${zone.name} on`}
+        aria-pressed=${zone.enabled ? "true" : "false"}
+        @click=${() =>
+          this.call(zone.enabled ? "turn_off" : "turn_on", {
+            entity_id: zone.entityId,
+          })}
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path d="M12 3v8M6.3 7.3a8 8 0 1 0 11.4 0" />
+        </svg>
+      </button>
+      <a
+        class="icon settings"
+        href=${this.settingsPath(zone)}
+        aria-label="${zone.name} settings"
+        @click=${(e: MouseEvent) => {
+          e.preventDefault();
+          this.navigate(this.settingsPath(zone));
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path
+            d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"
+          />
+        </svg>
+      </a>
+    </div>`;
   }
 
   private renderNumbers(zone: Zone) {
@@ -424,7 +550,7 @@ export class HztZoneCard extends LitElement {
       ? friendlyName(this.hass as Hass, zone.roomSensor)
       : "No room sensor";
     const age = ago(sensor?.last_updated, Date.now());
-    const target = zone.target;
+    const settings = this.settings(zone);
     return html`<div class="numbers">
       <div class="room">
         <span class="label">Room</span>
@@ -448,31 +574,33 @@ export class HztZoneCard extends LitElement {
         >
       </div>
       ${
-        target === undefined
+        settings === undefined
           ? nothing
           : html`<div class="target">
             <button
               class="step"
               aria-label="Lower the target"
+              ?disabled=${settings.target <= MIN_TARGET}
               @click=${() =>
-                this.call("set_temperature", {
-                  entity_id: zone.entityId,
-                  temperature: target - STEP,
+                this.commit(zone, {
+                  ...settings,
+                  target: settings.target - STEP,
                 })}
             >
               −
             </button>
             <div class="target-value">
               <span class="label">Target</span>
-              <span class="mid">${target.toFixed(1)}</span>
+              <span class="mid">${settings.target.toFixed(1)}</span>
             </div>
             <button
               class="step"
               aria-label="Raise the target"
+              ?disabled=${settings.target >= MAX_TARGET}
               @click=${() =>
-                this.call("set_temperature", {
-                  entity_id: zone.entityId,
-                  temperature: target + STEP,
+                this.commit(zone, {
+                  ...settings,
+                  target: settings.target + STEP,
                 })}
             >
               +
@@ -480,6 +608,265 @@ export class HztZoneCard extends LitElement {
           </div>`
       }
     </div>`;
+  }
+
+  // Heating below the band, idle across it, cooling above; the band is
+  // centred on the target. The target and both edges can be dragged.
+  private renderBand(zone: Zone) {
+    const settings = this.settings(zone);
+    if (settings === undefined || !zone.enabled) {
+      return nothing;
+    }
+    const { target, band } = settings;
+    const { heatBelow, coolAbove } = bandEdges(target, band);
+    const { low, high } = this.scale(zone, settings);
+    const room = zone.room;
+    const at = (t: number) =>
+      `${((clamp(t, low, high) - low) / (high - low)) * 100}%`;
+    const active = this.drag?.handle;
+    const edges = [
+      {
+        which: "low" as const,
+        value: heatBelow,
+        label: "Heating starts below",
+        text: `Heats below ${degrees(heatBelow)}`,
+      },
+      {
+        which: "high" as const,
+        value: coolAbove,
+        label: "Cooling starts above",
+        text: `Cools above ${degrees(coolAbove)}`,
+      },
+    ];
+    return html`<div
+      class="band ${this.drag ? "dragging" : ""}"
+      @pointermove=${this.moveDrag}
+      @pointerup=${this.endDrag}
+      @pointercancel=${this.endDrag}
+    >
+      <div
+        class="band-track"
+        role="img"
+        aria-label="Heats below ${degrees(heatBelow)}, idle up to ${degrees(coolAbove)}, cools above${
+          room === undefined ? "" : `; the room is ${degrees(room)}`
+        }"
+      >
+        <span class="seg heat" style="left:0;width:${at(heatBelow)}"></span>
+        <span
+          class="seg idle"
+          style="left:${at(heatBelow)};right:calc(100% - ${at(coolAbove)})"
+        ></span>
+        <span class="seg cool" style="left:${at(coolAbove)};right:0"></span>
+        <span class="tick" style="left:${at(heatBelow)}"></span>
+        <span class="tick" style="left:${at(coolAbove)}"></span>
+        <span
+          class="knob ${active === "target" ? "active" : ""}"
+          style="left:${at(target)}"
+          role="slider"
+          tabindex="0"
+          aria-label="Target"
+          aria-valuemin=${MIN_TARGET}
+          aria-valuemax=${MAX_TARGET}
+          aria-valuenow=${target}
+          aria-valuetext="Target ${degrees(target)}"
+          @pointerdown=${(e: PointerEvent) => this.startDrag(e, "target")}
+          @keydown=${(e: KeyboardEvent) => this.onHandleKey(e, "target")}
+        >
+          <span class="knob-face"></span>
+          <span class="bubble">${target.toFixed(1)}</span>
+        </span>
+        ${
+          room === undefined
+            ? nothing
+            : html`<span class="pin" style="left:${at(room)}"></span>`
+        }
+      </div>
+      <div class="band-scale">
+        ${edges.map(
+          (edge) => html`<span
+            class="edge ${edge.which} ${active === edge.which ? "active" : ""}"
+            style="--at:${at(edge.value)}"
+            role="slider"
+            tabindex="0"
+            aria-label=${edge.label}
+            aria-valuenow=${edge.value}
+            aria-valuetext=${edge.text}
+            @pointerdown=${(e: PointerEvent) => this.startDrag(e, edge.which)}
+            @keydown=${(e: KeyboardEvent) => this.onHandleKey(e, edge.which)}
+            >${edge.which === "low" ? "Heats below" : "Cools above"}
+            <strong>${tenths(edge.value)}</strong></span
+          >`,
+        )}
+      </div>
+    </div>`;
+  }
+
+  // The last day: the room against the band as it was, and when HZT
+  // heated or cooled.
+  private renderHistory(zone: Zone) {
+    const points = this.history;
+    if (points === undefined) {
+      return nothing;
+    }
+    const now = Date.now();
+    const from = now - HISTORY_HOURS * 3600_000;
+    const rooms = points.filter((p) => p.room !== undefined);
+    if (zone.room !== undefined) {
+      rooms.push({ time: now, room: zone.room });
+    }
+    if (rooms.length < 2) {
+      return html`<p class="small">
+        The last ${HISTORY_HOURS} hours show here once there’s some history.
+      </p>`;
+    }
+    // Each zone row holds until the next, the last until now.
+    const zoneRows = points.filter((p) => p.state !== undefined);
+    const spans = zoneRows.map((p, i) => ({
+      start: Math.max(p.time, from),
+      end: zoneRows[i + 1]?.time ?? now,
+      ...p,
+    }));
+    const temps = [
+      ...rooms.map((p) => p.room as number),
+      ...spans.flatMap((s) =>
+        s.target === undefined
+          ? []
+          : [s.target - (s.band ?? 0) / 2, s.target + (s.band ?? 0) / 2],
+      ),
+    ];
+    const low = Math.floor(Math.min(...temps) - 0.3);
+    const high = Math.ceil(Math.max(...temps) + 0.3);
+    const width = 600;
+    const height = 104;
+    const x = (time: number) =>
+      ((Math.max(time, from) - from) / (now - from)) * width;
+    const y = (value: number) =>
+      height - ((value - low) / (high - low)) * height;
+
+    // The band as one shape, so it has no seams: along its upper edge,
+    // then back along its lower one, stepping where it changed.
+    const set = spans.filter(
+      (s): s is typeof s & { target: number; band: number } =>
+        s.target !== undefined && s.band !== undefined,
+    );
+    const edgePath = (side: 1 | -1, list: typeof set) =>
+      list
+        .map((s) => {
+          const level = y(s.target + (side * s.band) / 2);
+          const [a, b] = side === 1 ? [s.start, s.end] : [s.end, s.start];
+          return `L${x(a)} ${level} L${x(b)} ${level}`;
+        })
+        .join(" ");
+    const bandPath = set.length
+      ? `M${edgePath(1, set).slice(1)} ${edgePath(-1, [...set].reverse())} Z`
+      : "";
+    const targetPath = set.length
+      ? `M${set
+          .map(
+            (s) => `${x(s.start)} ${y(s.target)} L${x(s.end)} ${y(s.target)}`,
+          )
+          .join(" L")}`
+      : "";
+    const roomPath = rooms
+      .map((p, i) => `${i ? "L" : "M"}${x(p.time)} ${y(p.room as number)}`)
+      .join(" ");
+    // The temperature axis: whole degrees, a label every degree or two.
+    const every = high - low > 6 ? 2 : 1;
+    const ticks: number[] = [];
+    for (let t = Math.ceil(low / every) * every; t <= high; t += every) {
+      ticks.push(t);
+    }
+    return html`<section class="history">
+      <div class="plot">
+        <svg
+          class="chart"
+          viewBox="0 0 ${width} ${height}"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label="Room temperature against the idle band over the last ${HISTORY_HOURS} hours"
+        >
+          ${ticks.map(
+            (t) =>
+              svg`<line class="h-grid" x1="0" x2=${width} y1=${y(t)} y2=${y(t)}></line>`,
+          )}
+          <path class="h-idle" d=${bandPath}></path>
+          <path class="h-target" d=${targetPath}></path>
+          <path class="h-room" d=${roomPath}></path>
+        </svg>
+        ${ticks.map(
+          (t) =>
+            html`<span class="y-label" style="top:${(y(t) / height) * 100}%"
+              >${t}°</span
+            >`,
+        )}
+      </div>
+      ${this.renderLanes(zone, from, now)}
+      <div class="chart-scale">
+        <span>${HISTORY_HOURS} h ago</span>
+        <span>now</span>
+      </div>
+      <p class="legend">
+        <span><span class="swatch room"></span>room</span>
+        <span><span class="swatch idle"></span>idle band</span>
+        <span><span class="swatch heat"></span>heating</span>
+        <span><span class="swatch cool"></span>cooling</span>
+      </p>
+    </section>`;
+  }
+
+  // One lane per room unit under the chart, on the same time axis: when
+  // its device was actually heating or cooling (shadow mode included).
+  private renderLanes(zone: Zone, from: number, now: number) {
+    const x = (time: number) =>
+      ((Math.max(time, from) - from) / (now - from)) * 100;
+    return zone.units.map((unit) => {
+      const rows = this.unitHistory[unit.id] ?? [];
+      const live = deviceMode(
+        unit,
+        this.hass?.states[unit.entity_id]?.state,
+        this.hass?.states[unit.entity_id]?.attributes ?? {},
+      );
+      // Merged runs, the last until now (as the device is now).
+      const runs: { mode: "heat" | "cool"; start: number; end: number }[] = [];
+      const changes = [...rows, { time: now, mode: live }];
+      changes.forEach((row, i) => {
+        const end = changes[i + 1]?.time ?? now;
+        const last = runs.at(-1);
+        if (!row.mode || end <= from) {
+          return;
+        }
+        if (last && last.mode === row.mode && last.end >= row.time) {
+          last.end = end;
+        } else {
+          runs.push({ mode: row.mode, start: Math.max(row.time, from), end });
+        }
+      });
+      return html`<div class="lane">
+        <span class="lane-name">${unit.name}</span>
+        <div
+          class="lane-track"
+          role="img"
+          aria-label="${unit.name}: ${
+            runs.length
+              ? runs
+                  .map(
+                    (r) =>
+                      `${r.mode === "heat" ? "heating" : "cooling"} ${clock(r.start)}–${r.end >= now ? "now" : clock(r.end)}`,
+                  )
+                  .join(", ")
+              : `didn’t run in the last ${HISTORY_HOURS} hours`
+          }"
+        >
+          ${runs.map(
+            (r) =>
+              html`<span
+                class="run ${r.mode}"
+                style="left:${x(r.start)}%;width:${Math.max(0.4, x(r.end) - x(r.start))}%"
+              ></span>`,
+          )}
+        </div>
+      </div>`;
+    });
   }
 
   // What the zone's units are actually doing, read from the devices
@@ -549,56 +936,6 @@ export class HztZoneCard extends LitElement {
       parts.push(`compressor ${compressor}`);
     }
     return parts.join(" · ");
-  }
-
-  // Heating below the target, idle up to target + band, cooling above.
-  private renderBand(zone: Zone) {
-    const target = zone.target;
-    if (target === undefined || !zone.enabled) {
-      return nothing;
-    }
-    const coolFrom = target + zone.idleBand;
-    const room = zone.room;
-    // A fixed scale, so changing the target moves its ticks, not the room.
-    // Widened only when something falls outside it.
-    const low = Math.floor(
-      Math.min(BAND_LOW, target - 1, (room ?? target) - 1),
-    );
-    const high = Math.ceil(
-      Math.max(BAND_HIGH, coolFrom + 1, (room ?? target) + 1),
-    );
-    const at = (t: number) =>
-      `${(((Math.min(Math.max(t, low), high) - low) / (high - low)) * 100).toFixed(2)}%`;
-    return html`<div
-      class="band"
-      role="img"
-      aria-label="Heats below ${degrees(target)}, idle up to ${degrees(coolFrom)}, cools above${
-        room === undefined ? "" : `; the room is ${degrees(room)}`
-      }"
-    >
-      <div class="band-labels">
-        <span class="heat-text" style="left:${at((low + target) / 2)}">Heating</span>
-        <span class="muted" style="left:${at((target + coolFrom) / 2)}">Idle</span>
-        <span class="cool-text" style="left:${at((coolFrom + high) / 2)}">Cooling</span>
-      </div>
-      <div class="band-track">
-        <span class="seg heat" style="left:0;width:${at(target)}"></span>
-        <span
-          class="seg idle"
-          style="left:${at(target)};right:calc(100% - ${at(coolFrom)})"
-        ></span>
-        <span class="seg cool" style="left:${at(coolFrom)};right:0"></span>
-        <span class="tick" style="left:${at(target)}"></span>
-        <span class="tick" style="left:${at(coolFrom)}"></span>
-        ${room === undefined ? nothing : html`<span class="pin" style="left:${at(room)}"></span>`}
-      </div>
-      <div class="band-scale">
-        <span style="left:0">${low}</span>
-        <span class="strong" style="left:${at(target)}">${target.toFixed(1)}</span>
-        <span class="strong" style="left:${at(coolFrom)}">${coolFrom.toFixed(1)}</span>
-        <span style="right:0">${high}</span>
-      </div>
-    </div>`;
   }
 
   private renderUnits(zone: Zone) {
@@ -800,6 +1137,15 @@ export class HztZoneCard extends LitElement {
       justify-content: center;
       color: var(--hzt-muted);
     }
+    .icon.power.on {
+      color: var(--hzt-text);
+    }
+    .icon.power path {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+    }
     .icon.settings {
       width: 40px;
       height: 40px;
@@ -819,9 +1165,6 @@ export class HztZoneCard extends LitElement {
       stroke: currentColor;
       stroke-width: 1.8;
     }
-    ha-card {
-      cursor: pointer;
-    }
     button.link {
       border: 0;
       background: none;
@@ -838,9 +1181,9 @@ export class HztZoneCard extends LitElement {
     a {
       color: var(--primary-color, #0277bd);
     }
-    /* The aurora: two blurred, overlapping glows behind the top of the
-       card while a unit is actually heating or cooling, with no edge to
-       read as a shape (docs: the canvas's "zone card glow options", C). */
+    /* The aurora: two overlapping glows behind the top of the card while
+       a unit is actually heating or cooling, with no edge to read as a
+       shape (the canvas's "zone card glow options", C). */
     ha-card {
       position: relative;
       overflow: hidden;
@@ -896,18 +1239,6 @@ export class HztZoneCard extends LitElement {
       --glow: var(--hzt-cool);
       --glow-light: #50c8ff;
     }
-    .unit-text .device {
-      color: var(--hzt-text);
-    }
-    .icon.power.on {
-      color: var(--hzt-text);
-    }
-    .icon.power path {
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 2;
-      stroke-linecap: round;
-    }
     .numbers {
       display: flex;
       align-items: flex-end;
@@ -937,6 +1268,7 @@ export class HztZoneCard extends LitElement {
       font-size: 30px;
       font-weight: 500;
       line-height: 1.1;
+      font-variant-numeric: tabular-nums;
     }
     .target {
       display: flex;
@@ -971,72 +1303,50 @@ export class HztZoneCard extends LitElement {
       font-weight: 500;
     }
 
-    /* The band: everything slides to its new place. */
+    /* The band. Everything slides to its new place; while a handle is
+       held, quickly, so it glides from step to step under the finger. */
+    .band {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
     .band .seg,
     .band .tick,
     .band .pin,
-    .band-labels span,
-    .band-scale span {
+    .band .knob,
+    .band-scale .edge {
       transition:
         left 300ms ease,
         right 300ms ease,
         width 300ms ease;
     }
+    .band.dragging .seg,
+    .band.dragging .tick,
+    .band.dragging .knob,
+    .band.dragging .edge {
+      transition-duration: 110ms;
+      transition-timing-function: ease-out;
+    }
     @media (prefers-reduced-motion: reduce) {
       .band .seg,
       .band .tick,
       .band .pin,
-      .band-labels span,
-      .band-scale span {
-        transition: none;
+      .band .knob,
+      .band-scale .edge,
+      .knob-face,
+      .bubble {
+        transition: none !important;
       }
-    }
-    .band {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .band-labels,
-    .band-scale {
-      position: relative;
-      height: 18px;
-      font-size: 12px;
-    }
-    .band-labels span,
-    .band-scale span {
-      position: absolute;
-      top: 0;
-      white-space: nowrap;
-    }
-    .band-labels span {
-      transform: translateX(-50%);
-      font-weight: 500;
-    }
-    .band-scale span {
-      font-family: var(--ha-font-family-code, ui-monospace, monospace);
-      font-size: 11px;
-      color: var(--hzt-muted);
-    }
-    .band-scale span.strong {
-      transform: translateX(-50%);
-      color: var(--hzt-text);
-    }
-    .heat-text {
-      color: color-mix(in srgb, var(--hzt-heat) 75%, var(--hzt-text));
-    }
-    .cool-text {
-      color: color-mix(in srgb, var(--hzt-cool) 75%, var(--hzt-text));
-    }
-    .muted {
-      color: var(--hzt-muted);
     }
     .band-track {
       position: relative;
-      height: 16px;
+      height: 28px;
     }
     .seg {
       position: absolute;
-      top: 4px;
+      top: 10px;
       height: 8px;
     }
     .seg.heat {
@@ -1052,23 +1362,266 @@ export class HztZoneCard extends LitElement {
     }
     .tick {
       position: absolute;
-      top: 0;
+      top: 6px;
       width: 2px;
       height: 16px;
       margin-left: -1px;
       background: var(--hzt-muted);
     }
+    /* The room: a dot, under the target's ring when they meet. */
     .pin {
       position: absolute;
-      top: 0;
-      width: 16px;
-      height: 16px;
-      margin-left: -8px;
+      top: 9px;
+      width: 10px;
+      height: 10px;
+      margin-left: -5px;
+      border-radius: 5px;
+      background: var(--hzt-text);
+      pointer-events: none;
+    }
+    /* The target: a ring to grab, with a 44 px hit area. */
+    .knob {
+      position: absolute;
+      top: -8px;
+      width: 44px;
+      height: 44px;
+      margin-left: -22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      touch-action: none;
+      outline: none;
+      z-index: 1;
+    }
+    .knob.active {
+      cursor: grabbing;
+    }
+    .knob-face {
+      width: 22px;
+      height: 22px;
       box-sizing: border-box;
+      border-radius: 50%;
+      border: 3px solid var(--hzt-text);
+      background: transparent;
+      box-shadow: 0 0 0 3px var(--hzt-card);
+      transition:
+        transform 160ms ease,
+        box-shadow 160ms ease;
+    }
+    .knob:hover .knob-face,
+    .knob:focus-visible .knob-face {
+      box-shadow:
+        0 0 0 3px var(--hzt-card),
+        0 0 0 9px color-mix(in srgb, var(--hzt-text) 14%, transparent);
+    }
+    .knob.active .knob-face {
+      transform: scale(1.25);
+      box-shadow:
+        0 0 0 3px var(--hzt-card),
+        0 0 0 10px color-mix(in srgb, var(--hzt-text) 18%, transparent);
+    }
+    .bubble {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      padding: 3px 8px;
       border-radius: 8px;
       background: var(--hzt-text);
-      border: 3px solid var(--hzt-card);
-      box-shadow: 0 0 0 1px var(--hzt-text);
+      color: var(--hzt-card);
+      font-size: 13px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transform: translate(-50%, 6px) scale(0.9);
+      transition:
+        opacity 140ms ease,
+        transform 140ms ease;
+    }
+    .knob.active .bubble {
+      opacity: 1;
+      transform: translate(-50%, 0) scale(1);
+    }
+    /* The band's edges, as handles below it that say the rule: the lower
+       one hangs left of its edge and the upper one right, so they never
+       overlap, and both stay inside the card. */
+    .band-scale {
+      --edge-width: 128px;
+      position: relative;
+      height: 32px;
+    }
+    .edge {
+      position: absolute;
+      top: 2px;
+      width: var(--edge-width);
+      height: 28px;
+      box-sizing: border-box;
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--hzt-muted);
+      cursor: ew-resize;
+      touch-action: none;
+      outline: none;
+      white-space: nowrap;
+    }
+    .edge strong {
+      font-size: 13px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      color: var(--hzt-text);
+    }
+    .edge.low {
+      left: clamp(
+        0px,
+        calc(var(--at) - var(--edge-width)),
+        calc(100% - 2 * var(--edge-width))
+      );
+      justify-content: flex-end;
+      border-top-right-radius: 0;
+      background: color-mix(in srgb, var(--hzt-heat) 16%, var(--hzt-card));
+    }
+    .edge.high {
+      left: clamp(
+        var(--edge-width),
+        var(--at),
+        calc(100% - var(--edge-width))
+      );
+      border-top-left-radius: 0;
+      background: color-mix(in srgb, var(--hzt-cool) 16%, var(--hzt-card));
+    }
+    .edge.low:hover,
+    .edge.low:focus-visible,
+    .edge.low.active {
+      background: color-mix(in srgb, var(--hzt-heat) 30%, var(--hzt-card));
+    }
+    .edge.high:hover,
+    .edge.high:focus-visible,
+    .edge.high.active {
+      background: color-mix(in srgb, var(--hzt-cool) 30%, var(--hzt-card));
+    }
+
+    /* History: the chart and the unit lanes share one time axis, inset
+       by the temperature axis's labels. */
+    .history {
+      --axis: 30px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .plot {
+      position: relative;
+      padding-left: var(--axis);
+    }
+    .chart {
+      width: 100%;
+      height: 104px;
+      display: block;
+      overflow: visible;
+    }
+    .h-grid {
+      stroke: var(--hzt-border);
+      stroke-width: 1;
+      vector-effect: non-scaling-stroke;
+    }
+    .y-label {
+      position: absolute;
+      left: 0;
+      transform: translateY(-50%);
+      font-size: 11px;
+      line-height: 1;
+      color: var(--hzt-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .lane {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding-left: var(--axis);
+    }
+    .lane-name {
+      font-size: 11px;
+      color: var(--hzt-muted);
+    }
+    .lane-track {
+      position: relative;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--hzt-subtle);
+      overflow: hidden;
+    }
+    .run {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      border-radius: 3px;
+    }
+    .run.heat {
+      background: var(--hzt-heat);
+    }
+    .run.cool {
+      background: var(--hzt-cool);
+    }
+    .h-idle {
+      fill: color-mix(in srgb, var(--hzt-text) 9%, transparent);
+    }
+    .h-room {
+      fill: none;
+      stroke: var(--hzt-text);
+      stroke-width: 2;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .h-target {
+      fill: none;
+      stroke: var(--hzt-muted);
+      stroke-width: 1;
+      stroke-dasharray: 3 4;
+      vector-effect: non-scaling-stroke;
+    }
+    .chart-scale {
+      display: flex;
+      justify-content: space-between;
+      padding-left: var(--axis);
+      font-size: 11px;
+      color: var(--hzt-muted);
+    }
+    .legend {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--hzt-muted);
+    }
+    .legend > span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .swatch {
+      width: 14px;
+      height: 8px;
+      border-radius: 2px;
+    }
+    .swatch.room {
+      height: 2px;
+      background: var(--hzt-text);
+    }
+    .swatch.idle {
+      background: color-mix(in srgb, var(--hzt-text) 14%, transparent);
+    }
+    .swatch.heat {
+      height: 4px;
+      background: var(--hzt-heat);
+    }
+    .swatch.cool {
+      height: 4px;
+      background: var(--hzt-cool);
     }
 
     /* Units */
@@ -1139,6 +1692,9 @@ export class HztZoneCard extends LitElement {
       display: flex;
       flex-direction: column;
     }
+    .unit-text .device {
+      color: var(--hzt-text);
+    }
     .unit-name {
       font-size: 15px;
       font-weight: 500;
@@ -1159,165 +1715,6 @@ export class HztZoneCard extends LitElement {
       padding: 0 8px;
       font: inherit;
       font-size: 13px;
-    }
-    /* The zone dialog */
-    .zone-dialog {
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: var(--hzt-text);
-      max-width: min(600px, calc(100vw - 32px));
-      width: 100%;
-      max-height: calc(100vh - 48px);
-      overflow: visible;
-    }
-    .zone-dialog::backdrop {
-      background: rgba(0, 0, 0, 0.6);
-    }
-    .dialog-box {
-      position: relative;
-      isolation: isolate;
-      overflow: hidden;
-      overflow-y: auto;
-      max-height: calc(100vh - 48px);
-      box-sizing: border-box;
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-      padding: 20px;
-      border-radius: var(--ha-dialog-border-radius, 24px);
-      background: var(--ha-card-background, var(--hzt-card));
-      font-family: var(--ha-font-family-body, Roboto, system-ui, sans-serif);
-    }
-    .zone-dialog.heat {
-      --glow: var(--hzt-heat);
-      --glow-light: #ffbe5a;
-    }
-    .zone-dialog.cool {
-      --glow: var(--hzt-cool);
-      --glow-light: #50c8ff;
-    }
-    .dialog-box h2 {
-      font-size: 22px;
-    }
-    .dialog-box .big {
-      font-size: 64px;
-    }
-    .dialog-box .mid {
-      font-size: 40px;
-    }
-    .icon.close {
-      width: 40px;
-      height: 40px;
-      flex: none;
-      border: 0;
-      border-radius: 12px;
-      background: none;
-      color: var(--hzt-muted);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .icon.close path {
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 2;
-      stroke-linecap: round;
-    }
-    .history {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .chart {
-      width: 100%;
-      height: 120px;
-      display: block;
-      border-radius: 8px;
-      background: var(--hzt-subtle);
-    }
-    .h-room {
-      fill: none;
-      stroke: var(--hzt-text);
-      stroke-width: 2;
-      vector-effect: non-scaling-stroke;
-    }
-    .h-target {
-      fill: none;
-      stroke: var(--hzt-muted);
-      stroke-width: 1.5;
-      stroke-dasharray: 4 4;
-      vector-effect: non-scaling-stroke;
-    }
-    .h-heat {
-      fill: color-mix(in srgb, var(--hzt-heat) 22%, transparent);
-    }
-    .h-cool {
-      fill: color-mix(in srgb, var(--hzt-cool) 22%, transparent);
-    }
-    .chart-scale {
-      display: flex;
-      justify-content: space-between;
-      font-size: 11px;
-      color: var(--hzt-muted);
-    }
-    .legend {
-      display: flex;
-      gap: 14px;
-      flex-wrap: wrap;
-      font-size: 12px;
-      color: var(--hzt-muted);
-    }
-    .legend > span {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .swatch {
-      width: 14px;
-      height: 8px;
-      border-radius: 2px;
-    }
-    .swatch.room {
-      height: 2px;
-      background: var(--hzt-text);
-    }
-    .swatch.target {
-      height: 0;
-      border-top: 2px dashed var(--hzt-muted);
-    }
-    .swatch.heat {
-      background: color-mix(in srgb, var(--hzt-heat) 40%, transparent);
-    }
-    .swatch.cool {
-      background: color-mix(in srgb, var(--hzt-cool) 40%, transparent);
-    }
-    .dialog-foot {
-      display: flex;
-      justify-content: flex-end;
-      padding-top: 4px;
-      border-top: 1px solid var(--hzt-border);
-    }
-    .link.more {
-      min-height: 44px;
-      color: var(--primary-color, #0277bd);
-      font-size: 14px;
-    }
-    /* A phone: a sheet from the bottom, full width. */
-    @media (max-width: 600px) {
-      .zone-dialog {
-        max-width: 100vw;
-        margin: auto 0 0;
-        max-height: 92vh;
-      }
-      .dialog-box {
-        border-radius: 24px 24px 0 0;
-        max-height: 92vh;
-        padding: 16px;
-      }
-      .dialog-box .big {
-        font-size: 52px;
-      }
     }
     .missing p {
       font-size: 14px;
@@ -1352,5 +1749,5 @@ window.customCards.push({
   type: "hzt-zone-card",
   name: "HZT zone",
   description:
-    "One climate zone: the room against its target, what HZT decided and why, and its units.",
+    "One climate zone: the room against its target and band, its last day, what HZT decided and why, and its units.",
 });

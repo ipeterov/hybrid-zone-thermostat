@@ -136,7 +136,7 @@ async def test_a_locked_out_unit_hands_over_to_the_next(
     assert ac["heat_locked"] is True
     assert attributes["demands"]["ac"]["mode"] is None
     assert attributes["demands"]["radiator"]["mode"] == "heat"
-    assert "#1 Radiator" in attributes["reason"]
+    assert "heating with Radiator at" in attributes["reason"]
 
 
 @pytest.mark.parametrize("house_config", [live(LIVING_ROOM)])

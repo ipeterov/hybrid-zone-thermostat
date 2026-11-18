@@ -86,23 +86,53 @@ function fakeHistory(entityIds: string[]) {
     if (typeof states[entityId]?.attributes.hzt_zone_id !== "string") {
       continue; // a sensor: filled in from its zone below
     }
-    const target = Number(states[entityId]?.attributes.temperature ?? 22);
+    const attributes = states[entityId]?.attributes ?? {};
+    const target = Number(attributes.temperature ?? 22);
+    const band = Number(attributes.idle_band ?? 1.5);
     const rows = [];
     for (let i = 0; i <= 96; i++) {
       const hours = 24 - i / 4;
-      const room = target + 1.2 + 1.8 * Math.sin((i / 96) * Math.PI * 1.6);
-      const zoneState = room > target + 1.5 ? "cooling" : "idle";
+      const room = target + 0.6 + 1.8 * Math.sin((i / 96) * Math.PI * 1.6);
+      const zoneState =
+        room > target + band / 2
+          ? "cooling"
+          : room < target - band / 2
+            ? "heating"
+            : "idle";
       rows.push({
         s: "heat_cool",
         a: {
           current_temperature: Math.round(room * 10) / 10,
           temperature: target,
+          idle_band: band,
           zone_state: zoneState,
         },
         lu: now - hours * 3600,
       });
     }
     result[entityId] = rows;
+    // Its units' devices: the first in each order runs with the zone, the
+    // second joins only in the last stretch of heating.
+    const units = (attributes.units ?? []) as {
+      entity_id: string;
+      kind: string;
+      heat_rank: number | null;
+      cool_rank: number | null;
+    }[];
+    for (const unit of units) {
+      result[unit.entity_id] = rows.map((row, i) => {
+        const zoneState = row.a.zone_state;
+        const runs =
+          (zoneState === "heating" &&
+            (unit.heat_rank === 1 || (unit.heat_rank === 2 && i > 90))) ||
+          (zoneState === "cooling" && unit.cool_rank === 1);
+        if (unit.kind === "switch") {
+          return { s: runs ? "on" : "off", a: {}, lu: row.lu };
+        }
+        const action = runs ? zoneState : "idle";
+        return { s: "heat_cool", a: { hvac_action: action }, lu: row.lu };
+      });
+    }
     // The room sensor, if the zone has one: the same curve as its state.
     const sensor = states[entityId]?.attributes.room_sensor;
     if (typeof sensor === "string") {
@@ -161,6 +191,8 @@ function makeHass(): Hass {
         setAttribute(entityId, { temperature: data.temperature });
       } else if (service === "set_fan_mode") {
         setAttribute(entityId, { fan_mode: data.fan_mode });
+      } else if (service === "set_idle_band") {
+        setAttribute(entityId, { idle_band: data.idle_band });
       } else if (service === "set_swing_mode") {
         setAttribute(entityId, { swing_mode: data.swing_mode });
       }

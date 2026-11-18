@@ -1,8 +1,10 @@
 """PI control with demand split across an ordered list of units.
 
-Per zone there are two loops, as in ASHRAE Guideline 36: heating holds the
-target, cooling holds the target plus the idle band. Between the two,
-nothing runs. Each loop turns its error into a demand from 0 to 1:
+Per zone there are two loops, as in ASHRAE Guideline 36's separate heating
+and cooling setpoints: the zone has one target and an idle band centred on
+it, heating holds the band's lower edge and cooling its upper edge.
+Between the two, nothing runs. Each loop turns its error into a demand
+from 0 to 1:
 
     demand = clamp(kp * error + integral, 0, 1)
 
@@ -78,6 +80,21 @@ class _ZoneMemory:
     active: Mode | None = None
 
 
+def _edge(value: float) -> str:
+    """A band edge: one decimal, or two on a quarter degree (24 ± 0.75)."""
+    hundredths = round(value * 100)
+    return f"{value:.1f}" if hundredths % 10 == 0 else f"{value:.2f}"
+
+
+def _and(items: list[str]) -> str:
+    """'A', 'A and B', 'A, B and C'."""
+    return (
+        items[0]
+        if len(items) == 1
+        else f"{', '.join(items[:-1])} and {items[-1]}"
+    )
+
+
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
@@ -113,8 +130,8 @@ class PIController(ZoneByZoneController):
 
         hours = self._step_hours(memory, now)
         temperature = zone.room_temperature
-        heat_error = zone.target - temperature
-        cool_error = temperature - (zone.target + zone.idle_band)
+        heat_error = zone.heat_setpoint - temperature
+        cool_error = temperature - zone.cool_setpoint
 
         heat_demand = self._update_loop(memory.heat, heat_error, hours)
         cool_demand = self._update_loop(memory.cool, cool_error, hours)
@@ -143,8 +160,8 @@ class PIController(ZoneByZoneController):
             return ZoneDecision(
                 ZoneState.IDLE,
                 all_off,
-                f"{temperature:.1f} °C is between {zone.target:.1f} and "
-                f"{zone.target + zone.idle_band:.1f}: nothing needs to run.",
+                f"{temperature:.1f} °C is between {_edge(zone.heat_setpoint)} "
+                f"and {_edge(zone.cool_setpoint)}: nothing needs to run.",
             )
 
         if mode is Mode.HEAT:
@@ -165,7 +182,7 @@ class PIController(ZoneByZoneController):
 
         if demand > 0:
             levels = self._split(demand, order, loop.running)
-            reason = self._reason(zone, mode, demand, levels, order)
+            reason = self._reason(zone, mode, levels)
         else:
             # Past the setpoint but within the differential: the first
             # unit keeps going at its minimum.
@@ -212,29 +229,31 @@ class PIController(ZoneByZoneController):
         running.update(levels)
         return levels
 
+    # Reasons are read on the dashboard: plain sentences, units by name,
+    # in the order they joined.
+
     @staticmethod
     def _reason(
-        zone: ZoneSnapshot,
-        mode: Mode,
-        demand: float,
-        levels: Mapping[str, float],
-        order: list[str],
+        zone: ZoneSnapshot, mode: Mode, levels: Mapping[str, float]
     ) -> str:
         assert zone.room_temperature is not None
         if mode is Mode.HEAT:
-            gap = zone.target - zone.room_temperature
-            where = f"{gap:.1f} °C below {zone.target:.1f}"
+            gap = zone.heat_setpoint - zone.room_temperature
+            where = f"{gap:.1f} °C below {_edge(zone.heat_setpoint)}"
+            doing = "heating"
         else:
-            limit = zone.target + zone.idle_band
-            gap = zone.room_temperature - limit
-            where = f"{gap:.1f} °C above {limit:.1f}"
-        if not order:
-            return f"{where}, but no unit may {mode} right now."
-        running = ", ".join(
-            f"#{order.index(unit_id) + 1} {zone.units[unit_id].name or unit_id}"
-            for unit_id in levels
+            gap = zone.room_temperature - zone.cool_setpoint
+            where = f"{gap:.1f} °C above {_edge(zone.cool_setpoint)}"
+            doing = "cooling"
+        if not levels:
+            return f"{where}, but nothing may {mode} right now."
+        running = _and(
+            [
+                f"{zone.units[unit_id].name or unit_id} at {level:.0%}"
+                for unit_id, level in levels.items()
+            ]
         )
-        return f"{where}, demand {demand:.0%}: {running}."
+        return f"{where}: {doing} with {running}."
 
     @staticmethod
     def _holding_reason(
@@ -242,15 +261,19 @@ class PIController(ZoneByZoneController):
     ) -> str:
         assert zone.room_temperature is not None
         if mode is Mode.HEAT:
-            setpoint, stop = zone.target, zone.target + differential
+            setpoint, doing = zone.heat_setpoint, "heating"
+            stop = setpoint + differential
         else:
-            setpoint = zone.target + zone.idle_band
+            setpoint, doing = zone.cool_setpoint, "cooling"
             stop = setpoint - differential
-        where = f"{zone.room_temperature:.1f} °C, at {setpoint:.1f}"
+        where = f"{zone.room_temperature:.1f} °C, just past {_edge(setpoint)}"
         if not order:
-            return f"{where}, but no unit may {mode} right now."
+            return f"{where}, but nothing may {mode} right now."
         first = zone.units[order[0]].name or order[0]
-        return f"{where}: #1 {first} at its minimum until {stop:.1f}."
+        return (
+            f"{where}: {first} keeps {doing} at its minimum until "
+            f"{_edge(stop)}."
+        )
 
     def dump_state(self) -> dict[str, Any]:
         return {
