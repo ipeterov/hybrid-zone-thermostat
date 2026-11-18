@@ -18,6 +18,8 @@ interface ZoneCardConfig {
 }
 
 const STEP = 0.5;
+const BAND_LOW = 16;
+const BAND_HIGH = 30;
 
 function ago(isoTime: string | undefined, now: number): string | undefined {
   if (!isoTime) {
@@ -187,8 +189,14 @@ export class HztZoneCard extends LitElement {
     }
     const coolFrom = target + zone.idleBand;
     const room = zone.room;
-    const low = Math.floor(Math.min(target - 4, (room ?? target) - 1));
-    const high = Math.ceil(Math.max(coolFrom + 2.5, (room ?? target) + 1));
+    // A fixed scale, so changing the target moves its ticks, not the room.
+    // Widened only when something falls outside it.
+    const low = Math.floor(
+      Math.min(BAND_LOW, target - 1, (room ?? target) - 1),
+    );
+    const high = Math.ceil(
+      Math.max(BAND_HIGH, coolFrom + 1, (room ?? target) + 1),
+    );
     const at = (t: number) =>
       `${(((Math.min(Math.max(t, low), high) - low) / (high - low)) * 100).toFixed(2)}%`;
     return html`<div
@@ -489,7 +497,26 @@ export class HztZoneCard extends LitElement {
       font-weight: 500;
     }
 
-    /* The band */
+    /* The band: everything slides to its new place. */
+    .band .seg,
+    .band .tick,
+    .band .pin,
+    .band-labels span,
+    .band-scale span {
+      transition:
+        left 300ms ease,
+        right 300ms ease,
+        width 300ms ease;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .band .seg,
+      .band .tick,
+      .band .pin,
+      .band-labels span,
+      .band-scale span {
+        transition: none;
+      }
+    }
     .band {
       display: flex;
       flex-direction: column;

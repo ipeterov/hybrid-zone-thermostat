@@ -160,3 +160,16 @@ test("fits a phone", async ({ page }) => {
     ),
   ).toBe(true);
 });
+
+test("changing the target moves its ticks, not the room", async ({ page }) => {
+  await openCards(page, FIXTURES["living-room"]);
+  const living = card(page, "Living room");
+  const pin = living.locator(".pin");
+  const before = await pin.boundingBox();
+
+  await living.getByRole("button", { name: "Raise the target" }).click();
+  await living.getByRole("button", { name: "Raise the target" }).click();
+  await expect(living).toContainText(/Target\s*23\.0/);
+
+  expect((await pin.boundingBox())?.x).toBe(before?.x);
+});
