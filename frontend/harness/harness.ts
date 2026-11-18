@@ -68,6 +68,13 @@ const hass: Hass = {
 
 const panel = document.createElement("hzt-panel") as HTMLElement & {
   hass?: Hass;
+  narrow?: boolean;
 };
 panel.hass = hass;
+// HA hides its sidebar, and calls the panel narrow, below 870 px.
+const narrowQuery = window.matchMedia("(max-width: 870px)");
+panel.narrow = narrowQuery.matches;
+narrowQuery.addEventListener("change", (event) => {
+  panel.narrow = event.matches;
+});
 document.body.append(panel);

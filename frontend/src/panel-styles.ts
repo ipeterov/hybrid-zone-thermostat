@@ -27,6 +27,7 @@ export const panelStyles = css`
   .topbar {
     display: flex;
     align-items: center;
+    gap: 8px;
     min-height: 56px;
     padding: 0 24px;
     background: var(--hzt-card);
@@ -174,6 +175,22 @@ export const panelStyles = css`
   }
   .icon:not(:disabled):hover {
     background: var(--hzt-subtle);
+  }
+  .icon.menu {
+    width: 44px;
+    height: 44px;
+    border-radius: 22px;
+    margin-left: -12px;
+    color: var(--hzt-text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .icon.menu path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
   }
 
   /* Form controls */
@@ -441,5 +458,21 @@ export const panelStyles = css`
   }
   .side-form .side-actions {
     justify-content: flex-start;
+  }
+
+  @media (max-width: 600px) {
+    .topbar {
+      padding: 0 16px;
+    }
+    .page {
+      padding: 16px 12px;
+      gap: 12px;
+    }
+    .main {
+      gap: 12px;
+    }
+    .card {
+      padding: 16px;
+    }
   }
 `;

@@ -101,7 +101,9 @@ on the harness (`harness` server): `?fixture=empty|living-room|house`
 (frontend/harness/fixtures.ts) and `&theme=dark` for HA's dark theme, which
 the owner uses. Before and after any UI change, screenshot both at the same
 size, compare them, and fix what differs; check phone width too. Then
-deploy and look at it in the real HA. Tests passing says nothing about how
+deploy and look at it in the real HA: the owner's is at
+http://homeassistant.local (port 80, not 8123), already signed in in the
+browser pane. Tests passing says nothing about how
 it looks.
 
 **Every user-facing behaviour of the panel and card has a browser test**

@@ -21,20 +21,47 @@ import {
 } from "./hass";
 import { panelStyles } from "./panel-styles";
 
-// Map geometry, in px: three columns, a row per room unit. Matches
-// docs/design/panel-system-map.html.
-const MAP = {
-  width: 860,
-  top: 32,
-  row: 75,
-  node: 56,
-  centralX: 20,
-  centralW: 200,
-  unitX: 330,
-  unitW: 220,
-  zoneX: 640,
-  zoneW: 200,
-};
+// Map geometry, in px: a column each for central units, room units and
+// zones, a row per room unit (docs/design/panel-system-map.html). Columns
+// share the width the map has; below MAP_THREE_COLUMNS the central-units
+// column, only a hint for now, is dropped.
+const MAP_TOP = 32;
+const MAP_ROW = 75;
+const MAP_NODE = 56;
+const MAP_MIN_WIDTH = 280;
+const MAP_THREE_COLUMNS = 640;
+
+interface Column {
+  x: number;
+  w: number;
+}
+
+interface Geometry {
+  width: number;
+  central?: Column;
+  unit: Column;
+  zone: Column;
+}
+
+function geometry(available: number): Geometry {
+  const width = Math.max(available, MAP_MIN_WIDTH);
+  const three = width >= MAP_THREE_COLUMNS;
+  const gap = three ? 80 : 36;
+  const count = three ? 3 : 2;
+  const w = Math.min(240, (width - gap * (count - 1)) / count);
+  const columns = Array.from({ length: count }, (_, i) => ({
+    x: i * (w + gap),
+    w,
+  }));
+  return three
+    ? {
+        width,
+        central: columns[0],
+        unit: columns[1] as Column,
+        zone: columns[2] as Column,
+      }
+    : { width, unit: columns[0] as Column, zone: columns[1] as Column };
+}
 
 type Aside = { kind: "zone" } | { kind: "new-zone" } | { kind: "new-unit" };
 
@@ -87,6 +114,7 @@ export class HztPanel extends LitElement {
     saveError: { state: true },
     selected: { state: true },
     aside: { state: true },
+    mapWidth: { state: true },
   };
 
   static styles = panelStyles;
@@ -98,10 +126,30 @@ export class HztPanel extends LitElement {
   saveError?: string;
   selected?: string;
   aside: Aside = { kind: "zone" };
+  mapWidth = 860;
 
   private loading = false;
+  private observed?: Element;
+  private resizeObserver = new ResizeObserver((entries) => {
+    const width = entries[0]?.contentRect.width;
+    if (width && Math.abs(width - this.mapWidth) > 1) {
+      this.mapWidth = width;
+    }
+  });
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.resizeObserver.disconnect();
+    this.observed = undefined;
+  }
 
   protected updated(): void {
+    const mapBox = this.renderRoot.querySelector(".map-scroll");
+    if (mapBox && mapBox !== this.observed) {
+      this.resizeObserver.disconnect();
+      this.resizeObserver.observe(mapBox);
+      this.observed = mapBox;
+    }
     if (this.hass && !this.config && !this.loading && !this.error) {
       this.loading = true;
       this.hass
@@ -165,7 +213,28 @@ export class HztPanel extends LitElement {
 
   protected render() {
     return html`
-      <header class="topbar"><h1>Climate zones</h1></header>
+      <header class="topbar">
+        ${
+          this.narrow
+            ? html`<button
+              class="icon menu"
+              aria-label="Open the sidebar"
+              @click=${() =>
+                this.dispatchEvent(
+                  new CustomEvent("hass-toggle-menu", {
+                    bubbles: true,
+                    composed: true,
+                  }),
+                )}
+            >
+              <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+                <path d="M3 6h18M3 12h18M3 18h18" />
+              </svg>
+            </button>`
+            : nothing
+        }
+        <h1>Climate zones</h1>
+      </header>
       ${this.renderBody()}
     `;
   }
@@ -232,6 +301,7 @@ export class HztPanel extends LitElement {
   }
 
   private renderMap(config: HouseConfig, selected: Zone | undefined) {
+    const g = geometry(this.mapWidth);
     // Rows: each zone's units in order; a zone without units takes a row.
     const unitY = new Map<string, number>();
     const zoneY = new Map<string, number>();
@@ -240,22 +310,22 @@ export class HztPanel extends LitElement {
       const units = unitsOf(config, zone.id);
       const first = row;
       for (const unit of units) {
-        unitY.set(unit.id, MAP.top + row * MAP.row);
+        unitY.set(unit.id, MAP_TOP + row * MAP_ROW);
         row++;
       }
       if (units.length === 0) {
         row++;
       }
       const middle = (first + Math.max(row - 1, first)) / 2;
-      zoneY.set(zone.id, MAP.top + middle * MAP.row);
+      zoneY.set(zone.id, MAP_TOP + middle * MAP_ROW);
     }
-    const height = MAP.top + row * MAP.row;
+    const height = MAP_TOP + row * MAP_ROW;
 
     const lines = config.room_units.map((unit) => {
-      const from = (unitY.get(unit.id) ?? 0) + MAP.node / 2;
-      const to = (zoneY.get(unit.zone_id) ?? 0) + MAP.node / 2;
-      const x1 = MAP.unitX + MAP.unitW;
-      const x2 = MAP.zoneX;
+      const from = (unitY.get(unit.id) ?? 0) + MAP_NODE / 2;
+      const to = (zoneY.get(unit.zone_id) ?? 0) + MAP_NODE / 2;
+      const x1 = g.unit.x + g.unit.w;
+      const x2 = g.zone.x;
       const mid = (x1 + x2) / 2;
       const mode = this.status(unit.zone_id).demands[unit.id]?.mode;
       return svg`<path
@@ -265,37 +335,55 @@ export class HztPanel extends LitElement {
     });
 
     return html`<div class="map-scroll">
-      <div class="map" style="width:${MAP.width}px;height:${height}px">
-        <span class="col-label" style="left:${MAP.centralX}px"
-          >Central units</span
-        >
-        <span class="col-label" style="left:${MAP.unitX}px">Room units</span>
-        <span class="col-label" style="left:${MAP.zoneX}px">Zones</span>
+      <div class="map" style="width:${g.width}px;height:${height}px">
+        ${
+          g.central
+            ? html`<span class="col-label" style="left:${g.central.x}px"
+              >Central units</span
+            >`
+            : nothing
+        }
+        <span class="col-label" style="left:${g.unit.x}px">Room units</span>
+        <span class="col-label" style="left:${g.zone.x}px">Zones</span>
         <svg
-          width=${MAP.width}
+          width=${g.width}
           height=${height}
           class="lines"
           aria-hidden="true"
         >
           ${lines}
         </svg>
-        <p
-          class="node hint"
-          style="left:${MAP.centralX}px;top:${MAP.top}px;width:${MAP.centralW}px"
-        >
-          Boilers and multi-split outdoor units will go here.
-        </p>
+        ${
+          g.central
+            ? html`<p
+              class="node hint"
+              style="left:${g.central.x}px;top:${MAP_TOP}px;width:${g.central.w}px"
+            >
+              Boilers and multi-split outdoor units will go here.
+            </p>`
+            : nothing
+        }
         ${config.room_units.map((unit) =>
-          this.renderUnitNode(config, unit, unitY.get(unit.id) ?? 0),
+          this.renderUnitNode(config, unit, g.unit, unitY.get(unit.id) ?? 0),
         )}
         ${config.zones.map((zone) =>
-          this.renderZoneNode(zone, zoneY.get(zone.id) ?? 0, zone === selected),
+          this.renderZoneNode(
+            zone,
+            g.zone,
+            zoneY.get(zone.id) ?? 0,
+            zone === selected,
+          ),
         )}
       </div>
     </div>`;
   }
 
-  private renderUnitNode(config: HouseConfig, unit: RoomUnit, top: number) {
+  private renderUnitNode(
+    config: HouseConfig,
+    unit: RoomUnit,
+    column: Column,
+    top: number,
+  ) {
     const status = this.status(unit.zone_id);
     const demand = status.demands[unit.id];
     const rank = unitsOf(config, unit.zone_id).indexOf(unit) + 1;
@@ -312,20 +400,25 @@ export class HztPanel extends LitElement {
     }
     return html`<div
       class="node unit ${demand?.mode ?? ""} ${available ? "" : "gone"}"
-      style="left:${MAP.unitX}px;top:${top}px;width:${MAP.unitW}px"
+      style="left:${column.x}px;top:${top}px;width:${column.w}px"
     >
       <span class="node-name">${unit.name}</span>
       <span class="node-sub">${capitalize(word)} · #${rank}</span>
     </div>`;
   }
 
-  private renderZoneNode(zone: Zone, top: number, selected: boolean) {
+  private renderZoneNode(
+    zone: Zone,
+    column: Column,
+    top: number,
+    selected: boolean,
+  ) {
     const status = this.status(zone.id);
     const room = status.room === undefined ? "–" : status.room.toFixed(1);
     const word = stateWord(status);
     return html`<button
       class="node zone ${selected ? "selected" : ""}"
-      style="left:${MAP.zoneX}px;top:${top}px;width:${MAP.zoneW}px"
+      style="left:${column.x}px;top:${top}px;width:${column.w}px"
       aria-pressed=${selected ? "true" : "false"}
       @click=${() => {
         this.selected = zone.id;

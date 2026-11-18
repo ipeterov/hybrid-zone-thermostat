@@ -236,3 +236,35 @@ test("removes a room unit", async ({ page }) => {
     .poll(async () => (await lastSaved(page))?.room_units.map((u) => u.id))
     .toEqual(["hisense_ac"]);
 });
+
+test("on a narrow screen, offers HA's sidebar from the top bar", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page, FIXTURES.house ?? {});
+  await page.evaluate(() => {
+    document.addEventListener("hass-toggle-menu", () => {
+      window.hztCalls.push({ type: "hass-toggle-menu" });
+    });
+  });
+
+  await page.getByRole("button", { name: "Open the sidebar" }).click();
+
+  expect(
+    await page.evaluate(() =>
+      window.hztCalls.some((call) => call.type === "hass-toggle-menu"),
+    ),
+  ).toBe(true);
+  const fits = await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth,
+  );
+  expect(fits).toBe(true);
+});
+
+test("on a wide screen, leaves the sidebar to HA", async ({ page }) => {
+  await open(page, FIXTURES.house ?? {});
+
+  await expect(
+    page.getByRole("button", { name: "Open the sidebar" }),
+  ).toHaveCount(0);
+});
