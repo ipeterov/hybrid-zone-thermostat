@@ -40,6 +40,7 @@ async def entry(
     hass.states.async_set("sensor.living_room_temperature", "21.4")
     hass.states.async_set("climate.living_room_ac", "off")
     hass.states.async_set("climate.living_room_trv", "heat")
+    hass.states.async_set("switch.living_room_heater", "off")
 
     await async_setup_component(hass, "http", {})
     config_entry = MockConfigEntry(domain=DOMAIN)

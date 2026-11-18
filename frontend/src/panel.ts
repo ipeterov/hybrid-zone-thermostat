@@ -38,6 +38,12 @@ const CHANGEOVER_MINUTES = 10;
 const HEAT_LOCKOUTS = [-25, -20, -15, -10, -5, 0, 5, 10];
 const COOL_LOCKOUTS = [10, 12, 14, 16, 18, 20, 22, 25];
 const MINUTES = [0, 2, 3, 4, 5, 6, 8, 10, 15];
+const CYCLES: [number, string][] = [
+  [10, "10 min (most heaters)"],
+  [20, "20 min"],
+  [30, "30 min (slow heat, underfloor)"],
+  [60, "60 min"],
+];
 
 interface Column {
   x: number;
@@ -1009,6 +1015,8 @@ export class HztPanel extends LitElement {
         }
       </p>
 
+      ${isSwitchEntity(unit.entity_id) ? this.renderSwitching(unit, change) : nothing}
+
       <h3 class="eyebrow">Outdoor lockouts</h3>
       ${
         unit.can_heat
@@ -1138,6 +1146,43 @@ export class HztPanel extends LitElement {
       </div>`;
   }
 
+  private renderSwitching(
+    unit: RoomUnit,
+    change: (changes: Partial<RoomUnit>) => Promise<boolean>,
+  ) {
+    const cycle = unit.cycle_minutes;
+    const example = Math.max(0.4 * cycle, unit.min_run);
+    const exampleText =
+      cycle - example < unit.min_rest
+        ? "on the whole time"
+        : `on ${Number(example.toFixed(1))} min of every ${cycle}`;
+    return html`<h3 class="eyebrow">Switched on and off</h3>
+      <label class="field">
+        Cycle
+        <select
+          @change=${(event: Event) =>
+            change({ cycle_minutes: Number(selectValue(event.target)) })}
+        >
+          ${CYCLES.map(
+            ([minutes, label]) =>
+              html`<option value=${minutes} ?selected=${minutes === cycle}>
+                ${label}
+              </option>`,
+          )}
+        </select>
+        <small
+          >HZT switches it on for part of every ${cycle} minutes: at 40 %
+          demand it’s ${exampleText}; at full demand, the whole time. Longer
+          cycles suit slow heat such as underfloor.</small
+        >
+      </label>
+      <p class="note-box">
+        HZT only switches its power. Set the heater’s own thermostat to its
+        maximum so it doesn’t switch itself off first, and make sure the relay
+        or plug is rated for the heater’s power.
+      </p>`;
+  }
+
   // ---- Adding things ---------------------------------------------------
 
   private renderNewZone(config: HouseConfig, canCancel: boolean) {
@@ -1192,14 +1237,19 @@ export class HztPanel extends LitElement {
 
   private renderNewUnit(config: HouseConfig, zone: Zone) {
     const used = new Set(config.room_units.map((u) => u.entity_id));
-    const candidates = Object.values(this.hass?.states ?? {})
+    const free = Object.values(this.hass?.states ?? {})
       .filter(
         (entity) =>
-          entity.entity_id.startsWith("climate.") &&
           entity.attributes.hzt_zone_id === undefined &&
           !used.has(entity.entity_id),
       )
-      .sort((a, b) => a.entity_id.localeCompare(b.entity_id));
+      .sort((a, b) =>
+        friendlyName(this.hass as Hass, a.entity_id).localeCompare(
+          friendlyName(this.hass as Hass, b.entity_id),
+        ),
+      );
+    const climates = free.filter((e) => e.entity_id.startsWith("climate."));
+    const switches = free.filter((e) => isSwitchEntity(e.entity_id));
     const add = async (event: Event) => {
       event.preventDefault();
       const form = event.target as HTMLFormElement;
@@ -1209,17 +1259,29 @@ export class HztPanel extends LitElement {
       }
       const modes = this.hass.states[entityId]?.attributes.hvac_modes;
       const hvacModes = Array.isArray(modes) ? modes : [];
+      const switched = isSwitchEntity(entityId);
       const next = addRoomUnit(config, {
         name: friendlyName(this.hass, entityId),
         entity_id: entityId,
         zone_id: zone.id,
-        can_heat: hvacModes.includes("heat") || hvacModes.length === 0,
-        can_cool: hvacModes.includes("cool"),
+        can_heat:
+          switched || hvacModes.includes("heat") || hvacModes.length === 0,
+        can_cool: !switched && hvacModes.includes("cool"),
       });
       if (await this.save(next)) {
-        this.show({ kind: "zone" });
+        const added = next.room_units.at(-1);
+        // A switch can't say what it does: confirm it on its own page.
+        this.show(
+          switched && added
+            ? { kind: "unit", unitId: added.id }
+            : { kind: "zone" },
+        );
       }
     };
+    const option = (entity: HassEntity) =>
+      html`<option value=${entity.entity_id}>
+        ${friendlyName(this.hass as Hass, entity.entity_id)}
+      </option>`;
     return html`<form class="side-form" @submit=${add}>
       <button
         type="button"
@@ -1230,21 +1292,41 @@ export class HztPanel extends LitElement {
       </button>
       <h2 class="big">New room unit</h2>
       <p class="small">
-        A device that heats or cools ${zone.name}. Whether it heats, cools or
-        both is read from its modes; it joins the end of the zone’s order.
+        A device that heats or cools ${zone.name}. It joins the end of the
+        zone’s order.
       </p>
       <label class="field">
-        Climate entity
+        Device
         <select name="entity_id" required>
           <option value="">Choose one</option>
-          ${candidates.map(
-            (entity) =>
-              html`<option value=${entity.entity_id}>
-                ${friendlyName(this.hass as Hass, entity.entity_id)}
-              </option>`,
-          )}
+          ${
+            climates.length
+              ? html`<optgroup label="ACs, heat pumps, thermostats and TRVs">
+                ${climates.map(option)}
+              </optgroup>`
+              : nothing
+          }
+          ${
+            switches.length
+              ? html`<optgroup label="Relays and smart plugs">
+                ${switches.map(option)}
+              </optgroup>`
+              : nothing
+          }
         </select>
       </label>
+      <ul class="small hints">
+        <li>
+          <strong>An AC, heat pump or TRV</strong> (a climate entity): HZT sets
+          its mode and setpoint. Whether it heats, cools or both is read from
+          its modes.
+        </li>
+        <li>
+          <strong>A heater on a relay or smart plug</strong> (a switch): HZT
+          switches its power on and off, for longer or shorter as the room
+          needs.
+        </li>
+      </ul>
       <div class="side-actions start">
         <button type="submit" class="primary">Add unit</button>
         <button
@@ -1257,6 +1339,12 @@ export class HztPanel extends LitElement {
       </div>
     </form>`;
   }
+}
+
+function isSwitchEntity(entityId: string): boolean {
+  return (
+    entityId.startsWith("switch.") || entityId.startsWith("input_boolean.")
+  );
 }
 
 function capitalize(text: string): string {

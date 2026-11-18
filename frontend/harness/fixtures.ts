@@ -60,6 +60,7 @@ function unit(
     cool_lockout_below: null,
     min_run: 6,
     min_rest: 4,
+    cycle_minutes: 10,
     ...fields,
   };
 }
@@ -95,6 +96,9 @@ function zoneStatus(
       heat_lockout_below: u.heat_lockout_below,
       cool_lockout_below: u.cool_lockout_below,
       note: null,
+      kind: u.entity_id.startsWith("switch.") ? "switch" : "climate",
+      duty: null,
+      cycle_minutes: u.cycle_minutes,
       ...fields.units?.[u.id],
     }));
   const { units: _ignored, ...rest } = fields;
@@ -159,6 +163,11 @@ export const DEVICES: HassEntity[] = [
     },
   },
   climate("climate.living_room_trv", "Living room radiator", ["heat"]),
+  {
+    entity_id: "switch.living_room_heater_plug",
+    state: "off",
+    attributes: { friendly_name: "Heater plug" },
+  },
   climate("climate.bedroom_trv", "Bedroom radiator", ["heat"]),
   climate("climate.entryway_trv", "Entryway radiator", ["heat"]),
 ];
@@ -332,6 +341,44 @@ export const FIXTURES: Record<string, Fixture> = {
       },
     ],
   },
+  heater: (() => {
+    const config: HouseConfig = {
+      ...JUST_THE_AC,
+      room_units: [
+        ...JUST_THE_AC.room_units,
+        unit({
+          id: "heater_plug",
+          name: "Heater plug",
+          entity_id: "switch.living_room_heater_plug",
+          zone_id: "living_room",
+          min_run: 3,
+          min_rest: 3,
+        }),
+      ],
+      zones: JUST_THE_AC.zones.map((z) => ({
+        ...z,
+        heating_order: ["hisense_ac", "heater_plug"],
+      })),
+    };
+    return {
+      config,
+      states: [
+        ...DEVICES,
+        zoneStatus(config, "living_room", {
+          zone_state: "heating",
+          current_temperature: 21.4,
+          temperature: 23,
+          reason:
+            "1.6 °C below 23.0, demand 80%: #1 Hisense AC, #2 Heater plug.",
+          demands: {
+            hisense_ac: { mode: "heat", level: 1 },
+            heater_plug: { mode: "heat", level: 0.6 },
+          },
+          units: { heater_plug: { duty: "on 6 of every 10 min" } },
+        }),
+      ],
+    };
+  })(),
   "locked-out": {
     config: LIVING_ROOM,
     states: [

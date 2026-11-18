@@ -256,3 +256,11 @@ test("no glow while nothing actually runs, even if HZT would", async ({
   await expect(living).not.toContainText("compressor");
   await expect(living.locator(".room.glow")).toHaveCount(0);
 });
+
+test("a heater's row says how long it's on", async ({ page }) => {
+  await openCards(page, FIXTURES.heater);
+
+  await expect(card(page, "Living room")).toContainText(
+    "HZT: would heat · on 6 of every 10 min",
+  );
+});

@@ -48,6 +48,8 @@ class RoomUnitConfig(TypedDict):
     # Equipment protection, minutes.
     min_run: float
     min_rest: float
+    # Switches only: the length of one on/off cycle, minutes.
+    cycle_minutes: float
 
 
 class HouseConfig(TypedDict):
@@ -120,6 +122,9 @@ _SCHEMA = probatio.Schema(
                 ),
                 probatio.Optional("min_run", default=6.0): _MINUTES,
                 probatio.Optional("min_rest", default=4.0): _MINUTES,
+                probatio.Optional("cycle_minutes", default=10.0): probatio.All(
+                    probatio.Coerce(float), probatio.Range(min=5, max=120)
+                ),
             }
         ],
         probatio.Optional("central_units", default=list): [dict],

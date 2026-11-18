@@ -56,6 +56,8 @@ export interface RoomUnit {
   // Minutes.
   min_run: number;
   min_rest: number;
+  // Switches: one on/off cycle, minutes.
+  cycle_minutes: number;
 }
 
 export const DOMAIN = "hybrid_zone_thermostat";

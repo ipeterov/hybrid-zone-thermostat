@@ -647,6 +647,27 @@ export const panelStyles = css`
     background: var(--hzt-text);
   }
 
+  .hints {
+    margin: 0;
+    padding-left: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .hints strong,
+  .note-box strong {
+    color: var(--hzt-text);
+    font-weight: 500;
+  }
+  .note-box {
+    border: 1px solid var(--hzt-border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--hzt-muted);
+  }
+
   @media (max-width: 600px) {
     .chart {
       grid-template-columns: minmax(0, 1fr);

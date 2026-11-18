@@ -110,6 +110,7 @@ export function addRoomUnit(
         cool_lockout_below: null,
         min_run: 6,
         min_rest: 4,
+        cycle_minutes: 10,
         ...unit,
         id,
       },

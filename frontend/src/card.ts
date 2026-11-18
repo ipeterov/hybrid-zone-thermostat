@@ -412,6 +412,9 @@ export class HztZoneCard extends LitElement {
         hzt.push(`below ${wholeDegrees(t)} outdoor`);
       }
     }
+    if (unit.duty) {
+      hzt.push(unit.duty);
+    }
     if (unit.note) {
       hzt.push(unit.note);
     }

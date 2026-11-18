@@ -59,10 +59,20 @@ from .control import (
 )
 from .control.lockouts import Lockouts
 from .control.protection import Limits, Protection
-from .drivers import ClimateDriver
+from .drivers import (
+    SWITCH_DOMAINS,
+    ClimateDriver,
+    SwitchDriver,
+    on_minutes,
+)
 from .storage import ConfigStore, RoomUnitConfig, ZoneConfig
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def is_switch(unit: RoomUnitConfig) -> bool:
+    return unit["entity_id"].split(".", 1)[0] in SWITCH_DOMAINS
+
 
 SIGNAL_UPDATE = f"{DOMAIN}_update"
 UPDATE_INTERVAL = timedelta(seconds=30)
@@ -86,6 +96,8 @@ class UnitStatus:
     heat_locked: bool = False
     cool_locked: bool = False
     note: str | None = None
+    # Switches: how long they're on in each cycle at the current demand.
+    duty: str | None = None
 
 
 @dataclass(slots=True)
@@ -110,7 +122,7 @@ class Engine:
         self.unit_status: dict[str, UnitStatus] = {}
         self.manual: dict[str, ManualOverride] = {}
         self._sensor_missing_since: dict[str, datetime] = {}
-        self._drivers: dict[str, ClimateDriver] = {}
+        self._drivers: dict[str, ClimateDriver | SwitchDriver] = {}
         self._state_store: Store[dict[str, Any]] = Store(
             hass, STATE_STORAGE_VERSION, STATE_STORAGE_KEY
         )
@@ -244,6 +256,17 @@ class Engine:
             demand, note = self.protection.apply(unit_id, wanted, limits, now)
             demands[unit_id] = demand
             status.note = note
+            status.duty = None
+            if is_switch(unit) and demand.mode is not None:
+                cycle = unit["cycle_minutes"]
+                on = on_minutes(
+                    demand.level, cycle, unit["min_run"], unit["min_rest"]
+                )
+                status.duty = (
+                    "on the whole time"
+                    if on >= cycle
+                    else f"on {on:g} of every {cycle:g} min"
+                )
             if note:
                 notes.append(f"{unit['name']} {note}.")
         reason = " ".join([decision.reason, *notes]).strip()
@@ -332,10 +355,19 @@ class Engine:
 
     # ---- Driving the devices --------------------------------------------
 
-    def _driver(self, unit: RoomUnitConfig) -> ClimateDriver:
+    def _driver(self, unit: RoomUnitConfig) -> ClimateDriver | SwitchDriver:
         driver = self._drivers.get(unit["id"])
         if driver is None or driver.entity_id != unit["entity_id"]:
-            driver = ClimateDriver(self.hass, unit["entity_id"])
+            if is_switch(unit):
+                driver = SwitchDriver(
+                    self.hass,
+                    unit["entity_id"],
+                    cycle=timedelta(minutes=unit["cycle_minutes"]),
+                    min_run=timedelta(minutes=unit["min_run"]),
+                    min_rest=timedelta(minutes=unit["min_rest"]),
+                )
+            else:
+                driver = ClimateDriver(self.hass, unit["entity_id"])
             self._drivers[unit["id"]] = driver
         return driver
 

@@ -15,6 +15,8 @@ export interface ZoneUnit {
   heat_lockout_below: number | null;
   cool_lockout_below: number | null;
   note: string | null;
+  duty?: string | null;
+  kind?: "climate" | "switch";
 }
 
 export interface Demand {

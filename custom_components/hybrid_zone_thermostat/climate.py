@@ -19,6 +19,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import HztConfigEntry
 from .control import ZoneState
+from .drivers import SWITCH_DOMAINS
 from .entity import ZoneEntity
 
 # HA 2026.11 renamed climate temperatures to native_* and warns about the
@@ -127,6 +128,11 @@ class ZoneClimate(ZoneEntity, ClimateEntity):
                     "heat_lockout_below": unit["heat_lockout_below"],
                     "cool_lockout_below": unit["cool_lockout_below"],
                     "note": status.note if status else None,
+                    "duty": status.duty if status else None,
+                    "kind": "switch"
+                    if unit["entity_id"].split(".", 1)[0] in SWITCH_DOMAINS
+                    else "climate",
+                    "cycle_minutes": unit["cycle_minutes"],
                 }
             )
         return {

@@ -217,7 +217,7 @@ test("adds a room unit, reading what it can do from its modes", async ({
 
   await side(page).getByRole("button", { name: "+ Room unit" }).click();
   await side(page)
-    .getByLabel("Climate entity")
+    .getByLabel("Device")
     .selectOption("climate.living_room_hisense_ac");
   await side(page).getByRole("button", { name: "Add unit" }).click();
 
@@ -248,10 +248,7 @@ test("doesn't offer HZT's own zones as room units", async ({ page }) => {
 
   await side(page).getByRole("button", { name: "+ Room unit" }).click();
 
-  await expect(
-    side(page).getByLabel("Climate entity").locator("option"),
-  ).toHaveText([
-    "Choose one",
+  await expect(side(page).locator("optgroup[label^='ACs'] option")).toHaveText([
     "Bedroom radiator",
     "Entryway radiator",
     "Hisense AC",
@@ -394,4 +391,74 @@ test("?zone= opens that zone", async ({ page }) => {
   await expect(
     side(page).getByRole("heading", { name: "Bedroom" }),
   ).toBeVisible();
+});
+
+test("a relay is added as a heater and opens to confirm it", async ({
+  page,
+}) => {
+  await open(page, {
+    config: { ...LIVING_ROOM, room_units: [] },
+    states: DEVICES,
+  });
+
+  await side(page).getByRole("button", { name: "+ Room unit" }).click();
+  await side(page)
+    .getByLabel("Device")
+    .selectOption("switch.living_room_heater_plug");
+  await side(page).getByRole("button", { name: "Add unit" }).click();
+
+  await expect(
+    side(page).getByRole("heading", { name: "Heater plug" }),
+  ).toBeVisible();
+  await expect(side(page).getByLabel("Heats", { exact: true })).toBeChecked();
+  await expect(
+    side(page).getByLabel("Cools", { exact: true }),
+  ).not.toBeChecked();
+  await expect(side(page)).toContainText("HZT only switches its power");
+  const saved = await lastSaved(page);
+  expect(saved?.room_units[0]).toEqual(
+    expect.objectContaining({
+      entity_id: "switch.living_room_heater_plug",
+      can_heat: true,
+      can_cool: false,
+      cycle_minutes: 10,
+    }),
+  );
+});
+
+test("the device picker separates climate entities from relays", async ({
+  page,
+}) => {
+  await open(page, {
+    config: { ...LIVING_ROOM, room_units: [] },
+    states: DEVICES,
+  });
+
+  await side(page).getByRole("button", { name: "+ Room unit" }).click();
+
+  await expect(
+    side(page).locator("optgroup[label='Relays and smart plugs'] option"),
+  ).toHaveText(["Heater plug"]);
+});
+
+test("a heater's cycle says what it does", async ({ page }) => {
+  await open(page, FIXTURES.heater);
+  await openUnit(page, "Heater plug");
+
+  await expect(side(page)).toContainText(
+    "at 40 % demand it’s on 4 min of every 10",
+  );
+  await side(page).getByLabel("Cycle").selectOption("30");
+
+  await expect
+    .poll(async () => (await lastSaved(page))?.room_units[1]?.cycle_minutes)
+    .toBe(30);
+  await expect(side(page)).toContainText("part of every 30 minutes");
+});
+
+test("a climate unit has no switching settings", async ({ page }) => {
+  await open(page, FIXTURES.heater);
+  await openUnit(page, "Hisense AC");
+
+  await expect(side(page)).not.toContainText("Switched on and off");
 });

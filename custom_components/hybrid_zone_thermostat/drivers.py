@@ -182,3 +182,109 @@ class ClimateDriver:
         # Only once it went through, so a failed call is retried.
         self.last = command
         self._last_setpoint_sent = now
+
+
+# ---- Switches: relays and smart plugs ---------------------------------
+
+SWITCH_DOMAINS = ("switch", "input_boolean")
+
+
+def on_minutes(
+    level: float, cycle: float, min_run: float, min_rest: float
+) -> float:
+    """Minutes on in each cycle, for a unit asked to run at ``level``.
+
+    Time-proportional control, as Versatile Thermostat's TPI and most
+    commercial on/off thermostats do it: the share of each cycle spent on
+    follows demand. Level 0 means running at the minimum, which is one
+    minimum run. A run shorter than the minimum run stretches to it, and a
+    rest shorter than the minimum rest becomes no rest, so the switch never
+    short-cycles.
+
+    >>> on_minutes(0.4, 10, 3, 3)
+    4.0
+    >>> on_minutes(0.0, 10, 3, 3)  # running at its minimum
+    3.0
+    >>> on_minutes(0.85, 10, 3, 3)  # a 1.5 min rest is too short: stay on
+    10.0
+    >>> on_minutes(0.5, 10, 6, 4)  # 5 min on would be a short run
+    6.0
+    """
+    on = max(level * cycle, min_run)
+    if cycle - on < min_rest:
+        on = cycle
+    return round(min(on, cycle), 2)
+
+
+class SwitchDriver:
+    """Switches one relay or plug on and off in time-proportional cycles.
+
+    Each cycle starts by working out how long to be on this time; the
+    switch is on for that long, then off for the rest. Demand stopping
+    switches it off at once (equipment protection has already held it to
+    its minimum run).
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entity_id: str,
+        cycle: timedelta,
+        min_run: timedelta,
+        min_rest: timedelta,
+    ) -> None:
+        self.hass = hass
+        self.entity_id = entity_id
+        self.cycle = cycle
+        self.min_run = min_run
+        self.min_rest = min_rest
+        self.last: str | None = None
+        self._cycle_start: datetime | None = None
+        self._on_for = timedelta()
+        self._last_sent: datetime | None = None
+        self._contexts: deque[str] = deque(maxlen=20)
+
+    def is_ours(self, state: State, now: datetime) -> bool:
+        if state.context.id in self._contexts:
+            return True
+        if self._last_sent is not None and now - self._last_sent < SETTLE:
+            return True
+        return self.last is not None and state.state == self.last
+
+    def _wanted(self, demand: UnitDemand, now: datetime) -> str:
+        if demand.mode is None:
+            self._cycle_start = None
+            return "off"
+        if self._cycle_start is None or now - self._cycle_start >= self.cycle:
+            self._cycle_start = now
+            minutes = on_minutes(
+                demand.level,
+                self.cycle / timedelta(minutes=1),
+                self.min_run / timedelta(minutes=1),
+                self.min_rest / timedelta(minutes=1),
+            )
+            self._on_for = timedelta(minutes=minutes)
+        return "on" if now - self._cycle_start < self._on_for else "off"
+
+    async def async_apply(
+        self, demand: UnitDemand, room_temperature: float | None, now: datetime
+    ) -> None:
+        state = self.hass.states.get(self.entity_id)
+        if state is None or state.state == STATE_UNAVAILABLE:
+            return
+        wanted = self._wanted(demand, now)
+        if state.state == wanted:
+            self.last = wanted
+            return
+        context = Context()
+        self._contexts.append(context.id)
+        self._last_sent = now
+        domain = self.entity_id.split(".", 1)[0]
+        await self.hass.services.async_call(
+            domain,
+            f"turn_{wanted}",
+            {ATTR_ENTITY_ID: self.entity_id},
+            blocking=True,
+            context=context,
+        )
+        self.last = wanted
