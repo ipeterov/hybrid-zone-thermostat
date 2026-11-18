@@ -1,0 +1,7 @@
+{
+  "name": "Hybrid Zone Thermostat",
+  "homeassistant": "2026.10.0",
+  "zip_release": true,
+  "filename": "hybrid_zone_thermostat.zip",
+  "render_readme": true
+}

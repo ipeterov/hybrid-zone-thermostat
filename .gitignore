@@ -1,0 +1,30 @@
+.venv
+node_modules/
+
+# The original brief: notes about the owner's house, kept local
+BRIEF.md
+
+# macOS Finder metadata
+.DS_Store
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# The panel and card, built by `npm run build` into the integration so a
+# release zip carries them. Never committed.
+custom_components/hybrid_zone_thermostat/frontend/
+
+# Browser test output (traces of failed tests)
+test-results/
+playwright-report/
+playwright-results.xml
+
+# `dev ha`: the local Home Assistant's config directory
+.ha-config/
+
+# A release zip built locally
+hybrid_zone_thermostat.zip

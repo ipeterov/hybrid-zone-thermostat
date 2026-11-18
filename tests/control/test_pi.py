@@ -1,0 +1,149 @@
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from custom_components.hybrid_zone_thermostat.control import (
+    HouseSnapshot,
+    Mode,
+    PIController,
+    UnitSnapshot,
+    ZoneSnapshot,
+    ZoneState,
+)
+
+T0 = datetime(2026, 11, 18, 18, 0, tzinfo=UTC)
+
+UNITS = {
+    "ac": UnitSnapshot("ac", can_heat=True, can_cool=True),
+    "radiator": UnitSnapshot("radiator", can_heat=True, can_cool=False),
+}
+
+
+def zone(
+    temperature: float | None,
+    *,
+    target: float = 22.0,
+    enabled: bool = True,
+    units: dict[str, UnitSnapshot] | None = None,
+) -> ZoneSnapshot:
+    return ZoneSnapshot(
+        zone_id="living_room",
+        enabled=enabled,
+        room_temperature=temperature,
+        target=target,
+        idle_band=1.5,
+        heating_order=("ac", "radiator"),
+        cooling_order=("ac",),
+        units=units or UNITS,
+    )
+
+
+def decide(controller: PIController, snapshot: ZoneSnapshot, at: datetime):
+    house = HouseSnapshot(
+        now=at, outdoor_temperature=5.0, zones={"z": snapshot}
+    )
+    return controller.decide(house).zones["z"]
+
+
+def run_for(controller: PIController, snapshot: ZoneSnapshot, minutes: int):
+    """Call every minute for ``minutes``; return the last decision."""
+    decision = None
+    for minute in range(minutes + 1):
+        decision = decide(controller, snapshot, T0 + timedelta(minutes=minute))
+    assert decision is not None
+    return decision
+
+
+def test_small_error_runs_only_the_first_unit():
+    decision = decide(PIController(), zone(21.6), T0)
+
+    assert decision.state is ZoneState.HEATING
+    assert decision.demands["ac"].mode is Mode.HEAT
+    assert decision.demands["radiator"].mode is None
+
+
+def test_persistent_error_brings_in_the_second_unit():
+    early = run_for(PIController(), zone(21.6), 5)
+    late = run_for(PIController(), zone(21.6), 120)
+
+    assert early.demands["radiator"].mode is None
+    assert late.demands["radiator"].mode is Mode.HEAT
+    assert late.demands["ac"].level == 1.0
+
+
+def test_large_error_brings_in_the_second_unit_at_once():
+    decision = decide(PIController(), zone(20.5), T0)
+
+    assert decision.demands["radiator"].mode is Mode.HEAT
+
+
+def test_idle_band_runs_nothing():
+    decision = decide(PIController(), zone(22.8), T0)
+
+    assert decision.state is ZoneState.IDLE
+    assert all(d.mode is None for d in decision.demands.values())
+
+
+def test_above_the_band_cools_with_the_cooling_order():
+    decision = decide(PIController(), zone(24.0), T0)
+
+    assert decision.state is ZoneState.COOLING
+    assert decision.demands["ac"].mode is Mode.COOL
+    assert decision.demands["radiator"].mode is None
+
+
+def test_changeover_resets_the_other_loop():
+    controller = PIController()
+    run_for(controller, zone(21.0), 60)
+
+    decision = decide(controller, zone(24.0), T0 + timedelta(minutes=61))
+
+    assert decision.state is ZoneState.COOLING
+    assert controller.dump_state()["living_room"]["heat_integral"] == 0.0
+
+
+def test_locked_out_unit_is_skipped_and_the_next_moves_up():
+    units = {
+        "ac": UnitSnapshot("ac", can_heat=False, can_cool=True),
+        "radiator": UnitSnapshot("radiator", can_heat=True, can_cool=False),
+    }
+
+    decision = decide(PIController(), zone(21.6, units=units), T0)
+
+    assert decision.demands["ac"].mode is None
+    assert decision.demands["radiator"].mode is Mode.HEAT
+    assert "#1 radiator" in decision.reason
+
+
+def test_no_room_temperature_holds_everything_off():
+    decision = decide(PIController(), zone(None), T0)
+
+    assert decision.state is ZoneState.FAULT
+    assert all(d.mode is None for d in decision.demands.values())
+
+
+def test_disabled_zone_is_off():
+    decision = decide(PIController(), zone(18.0, enabled=False), T0)
+
+    assert decision.state is ZoneState.OFF
+    assert all(d.mode is None for d in decision.demands.values())
+
+
+def test_a_long_gap_counts_as_at_most_ten_minutes():
+    controller = PIController()
+    decide(controller, zone(21.0), T0)
+
+    decide(controller, zone(21.0), T0 + timedelta(hours=6))
+
+    integral = controller.dump_state()["living_room"]["heat_integral"]
+    assert integral == pytest.approx(0.5 * 1.0 * (10 / 60))
+
+
+def test_state_survives_a_dump_and_load():
+    first = PIController()
+    run_for(first, zone(21.6), 90)
+
+    second = PIController()
+    second.load_state(first.dump_state())
+
+    assert second.dump_state() == first.dump_state()

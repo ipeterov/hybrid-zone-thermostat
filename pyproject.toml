@@ -1,0 +1,139 @@
+[project]
+name = "hybrid-zone-thermostat"
+# The integration's version is custom_components/hybrid_zone_thermostat/
+# manifest.json's, the one source of truth (see .github/workflows/ci.yml,
+# `release`). This package is only the dev tooling, never published.
+version = "0.0.0"
+description = "Home Assistant integration: one target per room, many heating and cooling units, shared plant"
+requires-python = ">=3.14.2,<3.15"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "click>=8.3",
+    "mypy>=1.19",
+    # Pins Home Assistant itself (it's updated alongside every HA release),
+    # so the HA version tests run against is the one in uv.lock.
+    "pytest-homeassistant-custom-component>=0.13.375",
+    # The frontend's static files, which HA's `frontend` (and so our panel)
+    # needs to set up in tests. HA requires an exact version of it without
+    # depending on it: keep this equal to the `requirements` in the locked
+    # HA's homeassistant/components/frontend/manifest.json.
+    "home-assistant-frontend==20260930.5",
+    "ruff>=0.14.10",
+]
+
+[project.scripts]
+dev = "devtools.cli:dev"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["devtools"]
+
+[tool.ruff]
+line-length = 80  # Soft target
+extend-exclude = ["frontend/node_modules"]
+
+[tool.ruff.lint]
+unfixable = ["F401"]
+select = [
+    "E",
+    "W",
+    "F",
+    "ERA",
+    "I",
+    "ASYNC",
+    "S",
+    "BLE",
+    "B",
+    "A",
+    "C4",
+    "DTZ",
+    "T10",
+    "EXE",
+    "ISC",
+    "INP",
+    "PIE",
+    "T20",
+    "LOG",
+    "G",
+    "RSE",
+    "RET",
+    "SLF",
+    "SIM",
+    "SLOT",
+    "TC",
+    "PTH",
+    "C90",
+    "N",
+    "PGH",
+    "PL",
+    "UP",
+    "FURB",
+    "RUF",
+]
+ignore = [
+    "E501",  # don't enforce line length - just try to fit in 80 chars when formatting
+    "G004",  # f-strings are better than clunky logging.basicConfig
+    "PLC0415",  # dynamic imports are ok to avoid circular
+    "PLC0414",  # conflicts with F401 explicit re-export
+    "SIM103",  # I don't like simplifying the last condition with early return pattern
+    "SIM108",  # Ternaries can be less readable - I want to decide myself
+    "S101",  # asserts are totally normal in pytest
+    "PLR0913",  # totally normal in pytest to have lots of args (fixtures)
+    "PLR2004",  # too sensitive to normal magic constants in tests
+    "N818",  # not every exception is an error
+    "S602",
+    "S603",
+    "S607",
+    "C901",
+    "PLR0911",
+    "PLR0912",
+    "PLR0915",
+    "TC001",  # those three break libs that rely on runtime type inspection
+    "TC002",
+    "TC003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test packages are found by pytest's rootdir, not imported as a package.
+"tests/**/*.py" = ["INP001"]
+
+[tool.ruff.lint.isort]
+section-order = [
+    "future",
+    "standard-library",
+    "homeassistant",
+    "third-party",
+    "first-party",
+    "local-folder",
+]
+no-lines-before = ["standard-library", "local-folder"]
+known-first-party = ["custom_components", "devtools"]
+
+[tool.ruff.lint.isort.sections]
+"homeassistant" = ["homeassistant"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["custom_components", "devtools"]
+explicit_package_bases = true
+
+# HA re-exports names from its packages' __init__ without `__all__` (e.g.
+# websocket_api.websocket_command, http.StaticPathConfig) and documents them
+# as the API.
+[[tool.mypy.overrides]]
+module = "homeassistant.*"
+implicit_reexport = true
+
+[tool.pytest]
+# control/ for its doctests (--doctest-modules).
+testpaths = ["tests", "custom_components/hybrid_zone_thermostat/control"]
+# asyncio_mode=auto: the HA test plugin's fixtures are async.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["-v", "--tb=short", "--doctest-modules"]

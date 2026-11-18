@@ -1,0 +1,39 @@
+name: Newest Home Assistant
+on:
+  # HA releases monthly and breaks custom integrations without anyone here
+  # pushing. Weekly, the Python tests run against the newest HA the test
+  # harness supports. Nothing is committed: a red run says it's time for
+  # `uv run dev bump-ha` and a look at what broke.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    name: Python Tests on the newest HA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+          save-cache: false
+
+      - name: Install the project
+        run: uv sync --locked --dev --quiet
+
+      - name: Move to the newest HA
+        run: uv run dev bump-ha
+
+      - name: Run tests
+        run: uv run dev test -q

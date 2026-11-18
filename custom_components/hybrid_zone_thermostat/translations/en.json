@@ -1,0 +1,9 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "Zones and their heating and cooling units are set up on the Climate zones page, which appears in the sidebar once this is added."
+      }
+    }
+  }
+}

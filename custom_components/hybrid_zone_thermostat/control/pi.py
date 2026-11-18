@@ -1,0 +1,236 @@
+"""PI control with demand split across an ordered list of units.
+
+Per zone there are two loops, as in ASHRAE Guideline 36: heating holds the
+target, cooling holds the target plus the idle band. Between the two,
+nothing runs. Each loop turns its error into a demand from 0 to 1:
+
+    demand = clamp(kp * error + integral, 0, 1)
+
+where the integral grows by ``ki * error`` per hour and is clamped to
+[0, 1], so it can't wind up past full demand or below nothing. When one
+loop starts, the other's integral is reset.
+
+The demand is split across the units in the zone's order that may work in
+that direction right now (lockouts already applied). With n of them, unit
+k (counting from 0) owns the slice from k/n to (k+1)/n: it joins when the
+demand rises past k/n, and runs at the fraction of its slice that's
+filled. So a small, short error runs the first unit gently; an error that
+persists grows the integral until the next unit joins. That's the "joins
+after N minutes or N degrees below" rule, from two numbers instead of two
+per unit. A small hysteresis around each slice boundary stops a unit
+flapping on and off at the edge.
+"""
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any
+
+from .base import ZoneByZoneController
+from .model import (
+    OFF,
+    Mode,
+    UnitDemand,
+    ZoneDecision,
+    ZoneSnapshot,
+    ZoneState,
+)
+
+# A gap between calls longer than this (HA was down, say) counts as this
+# long, so one late call can't swing the integral to its limit.
+MAX_STEP = timedelta(minutes=10)
+
+
+@dataclass(frozen=True, slots=True)
+class PIGains:
+    """Tuning shared by every zone for now."""
+
+    kp: float = 0.5  # demand per °C of error: 2 °C off is full demand
+    ki: float = 0.5  # demand per °C·hour: 1 °C off for 2 h adds full demand
+    stage_hysteresis: float = 0.05  # demand, around each slice boundary
+
+
+@dataclass(slots=True)
+class _Loop:
+    integral: float = 0.0
+    # Units running in this loop's direction, by id.
+    running: set[str] = field(default_factory=set)
+
+
+@dataclass(slots=True)
+class _ZoneMemory:
+    heat: _Loop = field(default_factory=_Loop)
+    cool: _Loop = field(default_factory=_Loop)
+    last_update: datetime | None = None
+
+
+def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+class PIController(ZoneByZoneController):
+    """See the module docstring."""
+
+    def __init__(self, gains: PIGains | None = None) -> None:
+        self.gains = gains or PIGains()
+        self._zones: dict[str, _ZoneMemory] = {}
+
+    def decide_zone(
+        self,
+        zone: ZoneSnapshot,
+        now: datetime,
+        outdoor_temperature: float | None,
+    ) -> ZoneDecision:
+        memory = self._zones.setdefault(zone.zone_id, _ZoneMemory())
+        all_off = dict.fromkeys(zone.units, OFF)
+
+        if not zone.enabled:
+            self._zones[zone.zone_id] = _ZoneMemory()
+            return ZoneDecision(ZoneState.OFF, all_off, "Zone is off.")
+
+        if zone.room_temperature is None:
+            self._zones[zone.zone_id] = _ZoneMemory()
+            return ZoneDecision(
+                ZoneState.FAULT,
+                all_off,
+                "No room temperature, so every unit is held off.",
+            )
+
+        hours = self._step_hours(memory, now)
+        temperature = zone.room_temperature
+        heat_error = zone.target - temperature
+        cool_error = temperature - (zone.target + zone.idle_band)
+
+        heat_demand = self._update_loop(memory.heat, heat_error, hours)
+        cool_demand = self._update_loop(memory.cool, cool_error, hours)
+
+        # Only one direction at a time. The band keeps both errors from
+        # being positive together, but an integral can outlast its error.
+        if cool_demand > 0:
+            memory.heat = _Loop()
+            heat_demand = 0.0
+        elif heat_demand > 0:
+            memory.cool = _Loop()
+
+        if heat_demand > 0:
+            mode, demand, loop = Mode.HEAT, heat_demand, memory.heat
+            order = [
+                unit_id
+                for unit_id in zone.heating_order
+                if unit_id in zone.units and zone.units[unit_id].can_heat
+            ]
+            state = ZoneState.HEATING
+        elif cool_demand > 0:
+            mode, demand, loop = Mode.COOL, cool_demand, memory.cool
+            order = [
+                unit_id
+                for unit_id in zone.cooling_order
+                if unit_id in zone.units and zone.units[unit_id].can_cool
+            ]
+            state = ZoneState.COOLING
+        else:
+            memory.heat.running.clear()
+            memory.cool.running.clear()
+            return ZoneDecision(
+                ZoneState.IDLE,
+                all_off,
+                f"{temperature:.1f} °C is between {zone.target:.1f} and "
+                f"{zone.target + zone.idle_band:.1f}: nothing needs to run.",
+            )
+
+        levels = self._split(demand, order, loop.running)
+        demands = dict(all_off)
+        for unit_id, level in levels.items():
+            demands[unit_id] = UnitDemand(mode=mode, level=level)
+
+        return ZoneDecision(
+            state, demands, self._reason(zone, mode, demand, levels, order)
+        )
+
+    def _step_hours(self, memory: _ZoneMemory, now: datetime) -> float:
+        last, memory.last_update = memory.last_update, now
+        if last is None or now <= last:
+            return 0.0
+        return min(now - last, MAX_STEP) / timedelta(hours=1)
+
+    def _update_loop(self, loop: _Loop, error: float, hours: float) -> float:
+        loop.integral = _clamp(loop.integral + self.gains.ki * error * hours)
+        return _clamp(self.gains.kp * error + loop.integral)
+
+    def _split(
+        self, demand: float, order: list[str], running: set[str]
+    ) -> dict[str, float]:
+        """Which units run, and at what level. Updates ``running``."""
+        count = len(order)
+        hysteresis = self.gains.stage_hysteresis
+        levels: dict[str, float] = {}
+        for index, unit_id in enumerate(order):
+            start = index / count
+            # The first unit runs on any demand at all.
+            threshold = (
+                0.0
+                if index == 0
+                else start - hysteresis
+                if unit_id in running
+                else start + hysteresis
+            )
+            if demand > threshold:
+                levels[unit_id] = _clamp(demand * count - index)
+        running.clear()
+        running.update(levels)
+        return levels
+
+    @staticmethod
+    def _reason(
+        zone: ZoneSnapshot,
+        mode: Mode,
+        demand: float,
+        levels: Mapping[str, float],
+        order: list[str],
+    ) -> str:
+        assert zone.room_temperature is not None
+        if mode is Mode.HEAT:
+            gap = zone.target - zone.room_temperature
+            where = f"{gap:.1f} °C below {zone.target:.1f}"
+        else:
+            limit = zone.target + zone.idle_band
+            gap = zone.room_temperature - limit
+            where = f"{gap:.1f} °C above {limit:.1f}"
+        if not order:
+            return f"{where}, but no unit may {mode} right now."
+        running = ", ".join(
+            f"#{order.index(unit_id) + 1} {unit_id}" for unit_id in levels
+        )
+        return f"{where}, demand {demand:.0%}: {running}."
+
+    def dump_state(self) -> dict[str, Any]:
+        return {
+            zone_id: {
+                "heat_integral": memory.heat.integral,
+                "cool_integral": memory.cool.integral,
+                "heat_running": sorted(memory.heat.running),
+                "cool_running": sorted(memory.cool.running),
+                "last_update": memory.last_update.isoformat()
+                if memory.last_update
+                else None,
+            }
+            for zone_id, memory in self._zones.items()
+        }
+
+    def load_state(self, state: Mapping[str, Any]) -> None:
+        self._zones = {}
+        for zone_id, saved in state.items():
+            last_update = saved.get("last_update")
+            self._zones[zone_id] = _ZoneMemory(
+                heat=_Loop(
+                    float(saved.get("heat_integral", 0.0)),
+                    set(saved.get("heat_running", ())),
+                ),
+                cool=_Loop(
+                    float(saved.get("cool_integral", 0.0)),
+                    set(saved.get("cool_running", ())),
+                ),
+                last_update=datetime.fromisoformat(last_update)
+                if last_update
+                else None,
+            )

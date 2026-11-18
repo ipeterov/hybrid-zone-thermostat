@@ -1,0 +1,200 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A public repository: GitHub's own runners cost nothing, so every job is on
+# them.
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+
+      - name: Install the project
+        run: uv sync --locked --dev --quiet
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # The same gate developers run locally: ruff, mypy, the frontend
+      # pin, Biome, tsc.
+      - name: Run checks
+        run: uv run dev check
+
+  # The controller (with doctests), simulations, and the integration
+  # inside a real Home Assistant core, at the version uv.lock pins.
+  python-tests:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: "pyproject.toml"
+
+      # Restore only; `lint` saves the cache.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+          save-cache: false
+
+      - name: Install the project
+        run: uv sync --locked --dev --quiet
+
+      - name: Run tests
+        run: uv run dev test -q
+
+  # The panel and card on the harness page, in Chromium.
+  browser-tests:
+    name: Browser Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser tests
+        run: npm run test:browser
+
+      - name: Keep traces of failed tests
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  # HA's own validator: manifest.json, strings.json, translations.
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: home-assistant/actions/hassfest@master
+
+  # HACS's validator for the repository. `brands` is the listing in
+  # home-assistant/brands, which only matters for HACS's default list.
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          ignore: brands
+
+  # The version in manifest.json is the one source of truth: a push that
+  # changes it releases it. If tag v<version> doesn't exist yet, this builds
+  # the zip HACS installs, tags the commit, and publishes a GitHub release
+  # with the zip attached and notes generated from the commits.
+  release:
+    name: Release
+    needs:
+      - lint
+      - python-tests
+      - browser-tests
+      - hassfest
+      - hacs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: echo "tag=v$(jq -r .version custom_components/hybrid_zone_thermostat/manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Check if tag exists
+        id: check
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Install uv
+        if: steps.check.outputs.exists == 'false'
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+          save-cache: false
+
+      - name: Install the project
+        if: steps.check.outputs.exists == 'false'
+        run: uv sync --locked --dev --quiet
+
+      - name: Setup Node.js
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install frontend dependencies
+        if: steps.check.outputs.exists == 'false'
+        run: npm ci
+
+      - name: Build the release zip
+        if: steps.check.outputs.exists == 'false'
+        run: uv run dev release-zip
+
+      - name: Create tag and release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+          gh release create "${TAG}" hybrid_zone_thermostat.zip --title "${TAG}" --generate-notes

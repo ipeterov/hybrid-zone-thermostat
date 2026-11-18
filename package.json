@@ -1,0 +1,24 @@
+{
+  "name": "hybrid-zone-thermostat-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "watch": "vite build --watch",
+    "biome": "biome check",
+    "typescript": "tsc --noEmit",
+    "check": "npm run biome && npm run typescript",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "lit": "^3.3.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.8",
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}

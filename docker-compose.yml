@@ -1,0 +1,10 @@
+# `uv run dev ha`: Home Assistant with this integration mounted, for trying
+# the panel and the card by hand. The owner's house runs this HA version.
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.11.2
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./.ha-config:/config
+      - ./custom_components/hybrid_zone_thermostat:/config/custom_components/hybrid_zone_thermostat

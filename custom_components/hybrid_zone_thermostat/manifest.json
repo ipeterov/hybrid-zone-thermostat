@@ -1,0 +1,14 @@
+{
+  "domain": "hybrid_zone_thermostat",
+  "name": "Hybrid Zone Thermostat",
+  "codeowners": ["@ipeterov"],
+  "config_flow": true,
+  "dependencies": ["frontend", "http", "panel_custom", "websocket_api"],
+  "documentation": "https://github.com/ipeterov/hybrid-zone-thermostat",
+  "integration_type": "hub",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/ipeterov/hybrid-zone-thermostat/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}
