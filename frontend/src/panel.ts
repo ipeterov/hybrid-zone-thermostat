@@ -453,8 +453,11 @@ export class HztPanel extends LitElement {
     ) {
       return "locked out";
     }
-    if (status.state === "heating" || status.state === "cooling") {
-      return "standby";
+    if (status.state === "heating") {
+      return unit.can_heat ? "standby" : "idle, cools only";
+    }
+    if (status.state === "cooling") {
+      return unit.can_cool ? "standby" : "idle, heats only";
     }
     return status.state === "manual" ? "manual" : "idle";
   }

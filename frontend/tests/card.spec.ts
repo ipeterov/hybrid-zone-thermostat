@@ -264,3 +264,31 @@ test("a heater's row says how long it's on", async ({ page }) => {
     "HZT: would heat · on 6 of every 10 min",
   );
 });
+
+test("a heater isn't on standby while the zone cools", async ({ page }) => {
+  const heater = FIXTURES.heater ?? {};
+  const cooling = {
+    ...heater,
+    states: (heater.states ?? []).map((entity) =>
+      entity.entity_id === "climate.living_room"
+        ? {
+            ...entity,
+            attributes: {
+              ...entity.attributes,
+              zone_state: "cooling",
+              demands: {
+                hisense_ac: { mode: "cool", level: 1 },
+                heater_plug: { mode: null, level: 0 },
+              },
+            },
+          }
+        : entity,
+    ),
+  };
+  await openCards(page, cooling);
+
+  await expect(card(page, "Living room")).toContainText(
+    "HZT: idle, heats only",
+  );
+  await expect(card(page, "Living room")).not.toContainText("standby");
+});

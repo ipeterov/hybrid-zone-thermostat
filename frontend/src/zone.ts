@@ -115,8 +115,13 @@ export function unitWord(zone: Zone, unit: ZoneUnit): string {
   if (zone.state === "cooling" && unit.cool_locked) {
     return "Locked out";
   }
-  if (zone.state === "heating" || zone.state === "cooling") {
-    return "Standby";
+  // Standby only for the direction the unit works in: a heater isn't
+  // waiting to cool.
+  if (zone.state === "heating") {
+    return unit.heat_rank ? "Standby" : "Idle, cools only";
+  }
+  if (zone.state === "cooling") {
+    return unit.cool_rank ? "Standby" : "Idle, heats only";
   }
   if (zone.state === "manual") {
     return "Manual";
