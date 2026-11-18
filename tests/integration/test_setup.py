@@ -25,7 +25,7 @@ async def test_config_flow_creates_the_one_entry(hass: HomeAssistant):
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
-async def test_setup_registers_the_panel_and_unload_removes_it(
+async def test_the_panel_survives_a_reload_and_goes_with_the_entry(
     hass: HomeAssistant,
 ):
     await async_setup_component(hass, "http", {})
@@ -35,5 +35,9 @@ async def test_setup_registers_the_panel_and_unload_removes_it(
     assert await hass.config_entries.async_setup(entry.entry_id)
     assert PANEL_URL_PATH in hass.data[DATA_PANELS]
 
-    assert await hass.config_entries.async_unload(entry.entry_id)
+    # Saving settings reloads the entry; the person stays on the panel.
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    assert PANEL_URL_PATH in hass.data[DATA_PANELS]
+
+    assert await hass.config_entries.async_remove(entry.entry_id)
     assert PANEL_URL_PATH not in hass.data[DATA_PANELS]

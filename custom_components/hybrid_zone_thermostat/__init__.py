@@ -66,19 +66,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: HztConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    version = await hass.async_add_executor_job(_frontend_version)
-    await panel_custom.async_register_panel(
-        hass,
-        frontend_url_path=PANEL_URL_PATH,
-        webcomponent_name=PANEL_ELEMENT,
-        sidebar_title=PANEL_TITLE,
-        sidebar_icon=PANEL_ICON,
-        module_url=f"{FRONTEND_URL}/panel.js?v={version}",
-        require_admin=True,
-    )
-    card_url = f"{FRONTEND_URL}/card.js?v={version}"
-    frontend.add_extra_js_url(hass, card_url)
-    hass.data[f"{DOMAIN}_card_url"] = card_url
+    # The panel and card stay registered across reloads: saving settings
+    # reloads the entry, and removing the panel the person is on sends
+    # them back to the dashboard. They go when the entry is removed.
+    if f"{DOMAIN}_card_url" not in hass.data:
+        version = await hass.async_add_executor_job(_frontend_version)
+        await panel_custom.async_register_panel(
+            hass,
+            frontend_url_path=PANEL_URL_PATH,
+            webcomponent_name=PANEL_ELEMENT,
+            sidebar_title=PANEL_TITLE,
+            sidebar_icon=PANEL_ICON,
+            module_url=f"{FRONTEND_URL}/panel.js?v={version}",
+            require_admin=True,
+        )
+        card_url = f"{FRONTEND_URL}/card.js?v={version}"
+        frontend.add_extra_js_url(hass, card_url)
+        hass.data[f"{DOMAIN}_card_url"] = card_url
     return True
 
 
@@ -88,7 +92,11 @@ async def async_unload_entry(
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
     await entry.runtime_data.async_stop()
+    return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: HztConfigEntry) -> None:
+    """The integration is gone: so are its panel and card."""
     frontend.async_remove_panel(hass, PANEL_URL_PATH)
     if card_url := hass.data.pop(f"{DOMAIN}_card_url", None):
         frontend.remove_extra_js_url(hass, card_url)
-    return True
