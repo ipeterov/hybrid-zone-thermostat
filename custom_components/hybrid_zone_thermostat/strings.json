@@ -5,5 +5,23 @@
         "description": "Zones and their heating and cooling units are set up on the Climate zones page, which appears in the sidebar once this is added."
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "decision": {
+        "name": "Decision",
+        "state": {
+          "off": "Off",
+          "manual": "Manual",
+          "heating": "Heating",
+          "idle": "Idle",
+          "cooling": "Cooling",
+          "fault": "Fault"
+        }
+      },
+      "reason": {
+        "name": "Reason"
+      }
+    }
   }
 }

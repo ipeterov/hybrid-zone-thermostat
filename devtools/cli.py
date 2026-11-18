@@ -1,4 +1,5 @@
-"""Developer CLI: check, test, test-browser, build, ha, release-zip, bump-ha."""
+"""Developer CLI: check, test, test-browser, build, ha, deploy, release-zip,
+bump-ha."""
 
 import json
 import re
@@ -158,6 +159,102 @@ def ha() -> None:
     _run_or_exit(["npm", "run", "build"])
     (ROOT / ".ha-config").mkdir(exist_ok=True)
     sys.exit(_run(["docker", "compose", "up"]))
+
+
+@dev.command("deploy")
+@click.option(
+    "--host",
+    envvar="HZT_DEPLOY_HOST",
+    required=True,
+    help="SSH target of a Home Assistant OS box with the SSH add-on, "
+    "e.g. me@homeassistant.local. Or set HZT_DEPLOY_HOST.",
+)
+@click.option(
+    "--restart/--no-restart",
+    default=None,
+    help="Restart HA core afterwards. By default, only if something other "
+    "than the frontend changed: the panel and card are served uncached, so "
+    "a browser reload picks them up.",
+)
+def deploy(host: str, restart: bool | None) -> None:
+    """Build, copy the integration to a real Home Assistant, restart it.
+
+    For development against a real house: HA's config folder gets this
+    working tree's integration, replacing whatever HACS installed.
+    """
+    _run_or_exit(["npm", "run", "build"])
+    result = subprocess.run(
+        [
+            "rsync",
+            "-rlt",
+            "--checksum",
+            "--delete",
+            # Lists each file sent. Not --itemize-changes: macOS's rsync
+            # (openrsync) accepts it and prints nothing.
+            "--verbose",
+            "--exclude=__pycache__",
+            "--exclude=.DS_Store",
+            # The SSH add-on's user isn't root, and /config is root's.
+            "--rsync-path=sudo rsync",
+            f"{INTEGRATION}/",
+            f"{host}:/config/custom_components/{INTEGRATION.name}/",
+        ],
+        check=False,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        click.echo(result.stderr, err=True)
+        sys.exit(result.returncode)
+
+    changed = _rsync_changed_paths(result.stdout)
+    for path in changed:
+        click.echo(f"  {path}")
+    if not changed:
+        click.echo("Nothing changed.")
+    backend_changed = any(not path.startswith("frontend/") for path in changed)
+
+    if restart or (restart is None and backend_changed):
+        click.echo("Checking the config and restarting HA core...")
+        _run_or_exit(
+            ["ssh", host, 'bash -lc "ha core check && ha core restart"']
+        )
+        click.echo("HA core restarted.")
+    elif changed:
+        click.echo("Frontend only: reload the browser.")
+
+
+def _rsync_changed_paths(output: str) -> list[str]:
+    """The files `rsync --verbose` sent or deleted, from its output.
+
+    Both openrsync and GNU rsync print one path per line between a header
+    and a summary; directories end in a slash.
+
+    >>> _rsync_changed_paths(
+    ...     "Transfer starting: 24 files\\n"
+    ...     "control/\\n"
+    ...     "const.py\\n"
+    ...     "deleting old.py\\n"
+    ...     "\\n"
+    ...     "sent 1082 bytes  received 26 bytes  99819 bytes/sec\\n"
+    ...     "total size is 74697  speedup is 67.42\\n"
+    ... )
+    ['const.py', 'old.py']
+    """
+    noise = (
+        "Transfer starting",
+        "sending incremental file list",
+        "sent ",
+        "total size",
+    )
+    paths = []
+    for raw in output.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(noise) or line.endswith("/"):
+            continue
+        paths.append(line.removeprefix("deleting "))
+    return paths
 
 
 @dev.command("release-zip")

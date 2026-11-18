@@ -199,7 +199,8 @@ class PIController(ZoneByZoneController):
         if not order:
             return f"{where}, but no unit may {mode} right now."
         running = ", ".join(
-            f"#{order.index(unit_id) + 1} {unit_id}" for unit_id in levels
+            f"#{order.index(unit_id) + 1} {zone.units[unit_id].name or unit_id}"
+            for unit_id in levels
         )
         return f"{where}, demand {demand:.0%}: {running}."
 

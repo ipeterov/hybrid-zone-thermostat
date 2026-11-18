@@ -32,6 +32,7 @@ uv run dev check        # ruff, mypy, Biome, tsc
 uv run dev test         # Python tests
 uv run dev test-browser # browser tests of the panel and card
 uv run dev ha           # Home Assistant in Docker with this mounted
+HZT_DEPLOY_HOST=me@homeassistant.local uv run dev deploy  # onto a real HA OS box
 ```
 
 Licensed under MIT.

@@ -40,6 +40,8 @@ class UnitSnapshot:
     unit_id: str
     can_heat: bool
     can_cool: bool
+    # What people call it, for reasons. Falls back to the id.
+    name: str = ""
 
 
 @dataclass(frozen=True, slots=True)

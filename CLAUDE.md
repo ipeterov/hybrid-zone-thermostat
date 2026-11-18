@@ -43,9 +43,22 @@ Vocabulary, used in code and copy alike:
 - `frontend/`: TypeScript + Lit, built by Vite into the integration's
   `frontend/` folder (gitignored; the release zip carries it). `harness/` is
   a page that mounts the real panel with a fake `hass`, for browser tests.
+- `engine.py` builds a `HouseSnapshot` from HA states and runs the
+  controller on every relevant state change and every 30 s; its state is
+  saved to `.storage/hybrid_zone_thermostat.controller`. Per zone there's
+  `climate.<zone>` (target, `heat_cool`/`off`), `sensor.<zone>_decision`
+  and `sensor.<zone>_reason`.
+- **Shadow mode** (`engine.SHADOW`): there are no device drivers yet, so
+  decisions are computed and shown but nothing is sent. Entities must not
+  claim otherwise: `hvac_action` stays empty, the reason says so.
 - Local dev: `uv run dev check` (the gate CI runs), `uv run dev test`,
   `uv run dev test-browser`, `uv run dev ha` (HA in Docker with this
   mounted), `uv run dev bump-ha`.
+- **Development runs against the owner's real HA**: `uv run dev deploy`
+  (with `HZT_DEPLOY_HOST` set to the SSH target) builds, rsyncs the
+  integration into its `/config/custom_components/`, and restarts HA core
+  if anything but the frontend changed. Restarting the owner's HA is
+  expected when deploying; check its logs afterwards (ha-mcp).
 - Releases: bump `version` in manifest.json and push. CI tags it, builds
   the zip and publishes a GitHub release; HACS installs from that.
 

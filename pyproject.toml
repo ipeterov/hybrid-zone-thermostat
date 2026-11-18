@@ -100,7 +100,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Test packages are found by pytest's rootdir, not imported as a package.
-"tests/**/*.py" = ["INP001"]
+# Fixtures arrive as positional arguments, as many as a test needs.
+"tests/**/*.py" = ["INP001", "PLR0917"]
 
 [tool.ruff.lint.isort]
 section-order = [
@@ -131,8 +132,8 @@ module = "homeassistant.*"
 implicit_reexport = true
 
 [tool.pytest]
-# control/ for its doctests (--doctest-modules).
-testpaths = ["tests", "custom_components/hybrid_zone_thermostat/control"]
+# control/ and devtools/ for their doctests (--doctest-modules).
+testpaths = ["tests", "custom_components/hybrid_zone_thermostat/control", "devtools"]
 # asyncio_mode=auto: the HA test plugin's fixtures are async.
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

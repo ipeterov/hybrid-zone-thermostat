@@ -5,6 +5,7 @@ from pathlib import Path
 from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
@@ -18,13 +19,18 @@ from .const import (
     PANEL_TITLE,
     PANEL_URL_PATH,
 )
+from .control import PIController
+from .engine import Engine
 from .storage import ConfigStore
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+PLATFORMS = [Platform.CLIMATE, Platform.SENSOR]
 
 # Built by Vite (`npm run build`) into the integration, so a release zip
 # carries it. Not in git.
 FRONTEND_DIR = Path(__file__).parent / "frontend"
+
+type HztConfigEntry = ConfigEntry[Engine]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -36,10 +42,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: HztConfigEntry) -> bool:
     store = ConfigStore(hass)
     await store.async_load()
-    hass.data[DOMAIN] = store
+    engine = Engine(hass, store, PIController())
+    await engine.async_start()
+    entry.runtime_data = engine
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     await panel_custom.async_register_panel(
         hass,
@@ -54,8 +64,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, entry: HztConfigEntry
+) -> bool:
+    if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        return False
+    await entry.runtime_data.async_stop()
     frontend.async_remove_panel(hass, PANEL_URL_PATH)
     frontend.remove_extra_js_url(hass, f"{FRONTEND_URL}/card.js")
-    hass.data.pop(DOMAIN, None)
     return True

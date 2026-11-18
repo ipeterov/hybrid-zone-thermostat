@@ -1,0 +1,136 @@
+"""One climate entity per zone: the one control a room has."""
+
+from typing import Any
+
+from homeassistant.components.climate import (
+    ClimateEntity,
+    ClimateEntityFeature,
+    HVACAction,
+    HVACMode,
+)
+from homeassistant.const import (
+    ATTR_TEMPERATURE,
+    MAJOR_VERSION,
+    MINOR_VERSION,
+    UnitOfTemperature,
+)
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+from . import HztConfigEntry
+from .control import ZoneState
+from .engine import SHADOW
+from .entity import ZoneEntity
+
+# HA 2026.11 renamed climate temperatures to native_* and warns about the
+# old names; the test harness's HA (2026.10) only knows the old ones. The
+# entity provides native_* and, on an older HA, the old names too. Drop
+# the old names once the tests run on 2026.11 (`uv run dev bump-ha`).
+NATIVE_TEMPERATURES = (MAJOR_VERSION, MINOR_VERSION) >= (2026, 11)
+
+_ACTIONS = {
+    ZoneState.HEATING: HVACAction.HEATING,
+    ZoneState.COOLING: HVACAction.COOLING,
+    ZoneState.IDLE: HVACAction.IDLE,
+    ZoneState.OFF: HVACAction.OFF,
+}
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: HztConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    engine = entry.runtime_data
+    async_add_entities(
+        ZoneClimate(engine, entry.entry_id, zone["id"])
+        for zone in engine.store.config["zones"]
+    )
+
+
+class ZoneClimate(ZoneEntity, ClimateEntity):
+    """One target per zone; heat or cool is the controller's call, so the
+    only modes are on (heat_cool) and off."""
+
+    _attr_name = None
+    _attr_hvac_modes = [HVACMode.HEAT_COOL, HVACMode.OFF]  # noqa: RUF012
+    _attr_supported_features = (
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.TURN_ON
+        | ClimateEntityFeature.TURN_OFF
+    )
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_target_temperature_step = 0.5
+    _attr_min_temp = 5
+    _attr_max_temp = 35
+
+    def __init__(self, engine: Any, entry_id: str, zone_id: str) -> None:
+        super().__init__(engine, entry_id, zone_id)
+        self._attr_unique_id = f"{entry_id}_{zone_id}_climate"
+
+    @property
+    def hvac_mode(self) -> HVACMode:
+        enabled = self.engine.store.zone(self.zone_id)["enabled"]
+        return HVACMode.HEAT_COOL if enabled else HVACMode.OFF
+
+    @property
+    def hvac_action(self) -> HVACAction | None:
+        decision = self.zone_decision
+        if decision is None:
+            return None
+        if decision.state is ZoneState.OFF:
+            return HVACAction.OFF
+        # In shadow mode nothing runs, so claiming "heating" would be a lie.
+        if SHADOW:
+            return None
+        return _ACTIONS.get(decision.state)
+
+    @property
+    def native_current_temperature(self) -> float | None:
+        snapshot = self.zone_snapshot
+        return snapshot.room_temperature if snapshot else None
+
+    @property
+    def native_target_temperature(self) -> float:
+        return self.engine.store.zone(self.zone_id)["target"]
+
+    if not NATIVE_TEMPERATURES:
+        _attr_temperature_unit = UnitOfTemperature.CELSIUS
+        current_temperature = native_current_temperature
+        target_temperature = native_target_temperature
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        decision = self.zone_decision
+        return {
+            "hzt_zone_id": self.zone_id,
+            "zone_state": decision.state.value if decision else None,
+            "reason": decision.reason if decision else None,
+            "shadow": SHADOW,
+            "demands": {
+                unit_id: {
+                    "mode": demand.mode.value if demand.mode else None,
+                    "level": round(demand.level, 3),
+                }
+                for unit_id, demand in decision.demands.items()
+            }
+            if decision
+            else {},
+        }
+
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        if (temperature := kwargs.get(ATTR_TEMPERATURE)) is not None:
+            await self.engine.async_update_zone(
+                self.zone_id, target=float(temperature)
+            )
+
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        await self.engine.async_update_zone(
+            self.zone_id, enabled=hvac_mode != HVACMode.OFF
+        )
+
+    async def async_turn_on(self) -> None:
+        await self.async_set_hvac_mode(HVACMode.HEAT_COOL)
+
+    async def async_turn_off(self) -> None:
+        await self.async_set_hvac_mode(HVACMode.OFF)

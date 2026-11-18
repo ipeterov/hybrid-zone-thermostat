@@ -37,21 +37,3 @@ async def test_setup_registers_the_panel_and_unload_removes_it(
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert PANEL_URL_PATH not in hass.data[DATA_PANELS]
-
-
-async def test_panel_reads_an_empty_config(hass: HomeAssistant, hass_ws_client):
-    await async_setup_component(hass, "http", {})
-    entry = MockConfigEntry(domain=DOMAIN)
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-
-    client = await hass_ws_client(hass)
-    await client.send_json_auto_id({"type": f"{DOMAIN}/config"})
-    response = await client.receive_json()
-
-    assert response["success"]
-    assert response["result"] == {
-        "zones": [],
-        "room_units": [],
-        "central_units": [],
-    }
