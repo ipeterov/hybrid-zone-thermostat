@@ -122,6 +122,60 @@ def test_no_room_temperature_holds_everything_off():
     assert all(d.mode is None for d in decision.demands.values())
 
 
+def test_a_missing_reading_keeps_the_loops_memory():
+    controller = PIController()
+    run_for(controller, zone(24.0), 30)
+    before = controller.dump_state()["living_room"]["cool_integral"]
+
+    decide(controller, zone(None), T0 + timedelta(minutes=31))
+
+    assert before > 0
+    assert controller.dump_state()["living_room"]["cool_integral"] == before
+
+
+def test_cooling_keeps_going_at_minimum_just_below_the_edge():
+    controller = PIController()
+    run_for(controller, zone(23.8), 5)  # cooling, 0.3 above 23.5
+
+    # Back down to the edge, then 0.2 into the band: the integral has
+    # drained, but the zone holds on within the 0.3 differential.
+    for minute, temperature in enumerate([23.5, 23.4, 23.3, 23.4], start=6):
+        decision = decide(
+            controller, zone(temperature), T0 + timedelta(hours=minute)
+        )
+        assert decision.state is ZoneState.COOLING
+        assert decision.demands["ac"].mode is Mode.COOL
+
+    assert decision.demands["ac"].level == 0.0
+    assert "at its minimum until 23.2" in decision.reason
+
+
+def test_cooling_stops_past_the_differential():
+    controller = PIController()
+    run_for(controller, zone(23.8), 5)
+
+    decision = decide(controller, zone(23.2), T0 + timedelta(hours=2))
+
+    assert decision.state is ZoneState.IDLE
+
+
+def test_rising_into_the_band_from_below_does_not_hold_cooling():
+    decision = decide(PIController(), zone(23.4), T0)
+
+    assert decision.state is ZoneState.IDLE
+
+
+def test_heating_keeps_going_at_minimum_just_above_the_target():
+    controller = PIController()
+    run_for(controller, zone(21.8), 5)
+
+    decision = decide(controller, zone(22.2), T0 + timedelta(hours=2))
+
+    assert decision.state is ZoneState.HEATING
+    assert decision.demands["ac"].level == 0.0
+    assert decision.demands["radiator"].mode is None
+
+
 def test_disabled_zone_is_off():
     decision = decide(PIController(), zone(18.0, enabled=False), T0)
 

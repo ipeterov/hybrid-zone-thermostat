@@ -19,6 +19,14 @@ persists grows the integral until the next unit joins. That's the "joins
 after N minutes or N degrees below" rule, from two numbers instead of two
 per unit. A small hysteresis around each slice boundary stops a unit
 flapping on and off at the edge.
+
+A loop holds its setpoint, so once the room reaches it the error and the
+demand are about zero, and sensor noise would flip the zone between
+running and idle every tick. So a zone leaves heating or cooling only once
+the room is ``EXIT_DIFFERENTIAL`` past the setpoint, into the idle band:
+until then the first unit keeps running at its minimum. This is a
+thermostat's differential, and it suits inverter units, which are better
+off running slowly than starting and stopping.
 """
 
 from collections.abc import Mapping
@@ -39,6 +47,10 @@ from .model import (
 # A gap between calls longer than this (HA was down, say) counts as this
 # long, so one late call can't swing the integral to its limit.
 MAX_STEP = timedelta(minutes=10)
+
+# °C past the setpoint, into the idle band, before a running zone goes idle.
+# Never more than half the band, so heating's and cooling's never overlap.
+EXIT_DIFFERENTIAL = 0.3
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +74,8 @@ class _ZoneMemory:
     heat: _Loop = field(default_factory=_Loop)
     cool: _Loop = field(default_factory=_Loop)
     last_update: datetime | None = None
+    # The direction the zone ran in last decision, None when idle.
+    active: Mode | None = None
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -89,7 +103,8 @@ class PIController(ZoneByZoneController):
             return ZoneDecision(ZoneState.OFF, all_off, "Zone is off.")
 
         if zone.room_temperature is None:
-            self._zones[zone.zone_id] = _ZoneMemory()
+            # Memory is kept: a reading that's missing for a moment (HA
+            # starting, a sensor reconnecting) mustn't restart the loops.
             return ZoneDecision(
                 ZoneState.FAULT,
                 all_off,
@@ -112,23 +127,17 @@ class PIController(ZoneByZoneController):
         elif heat_demand > 0:
             memory.cool = _Loop()
 
+        differential = min(EXIT_DIFFERENTIAL, zone.idle_band / 2)
         if heat_demand > 0:
-            mode, demand, loop = Mode.HEAT, heat_demand, memory.heat
-            order = [
-                unit_id
-                for unit_id in zone.heating_order
-                if unit_id in zone.units and zone.units[unit_id].can_heat
-            ]
-            state = ZoneState.HEATING
+            mode, demand = Mode.HEAT, heat_demand
         elif cool_demand > 0:
-            mode, demand, loop = Mode.COOL, cool_demand, memory.cool
-            order = [
-                unit_id
-                for unit_id in zone.cooling_order
-                if unit_id in zone.units and zone.units[unit_id].can_cool
-            ]
-            state = ZoneState.COOLING
+            mode, demand = Mode.COOL, cool_demand
+        elif memory.active is Mode.HEAT and heat_error > -differential:
+            mode, demand = Mode.HEAT, 0.0
+        elif memory.active is Mode.COOL and cool_error > -differential:
+            mode, demand = Mode.COOL, 0.0
         else:
+            memory.active = None
             memory.heat.running.clear()
             memory.cool.running.clear()
             return ZoneDecision(
@@ -138,14 +147,37 @@ class PIController(ZoneByZoneController):
                 f"{zone.target + zone.idle_band:.1f}: nothing needs to run.",
             )
 
-        levels = self._split(demand, order, loop.running)
+        if mode is Mode.HEAT:
+            loop, state = memory.heat, ZoneState.HEATING
+            order = [
+                unit_id
+                for unit_id in zone.heating_order
+                if unit_id in zone.units and zone.units[unit_id].can_heat
+            ]
+        else:
+            loop, state = memory.cool, ZoneState.COOLING
+            order = [
+                unit_id
+                for unit_id in zone.cooling_order
+                if unit_id in zone.units and zone.units[unit_id].can_cool
+            ]
+        memory.active = mode
+
+        if demand > 0:
+            levels = self._split(demand, order, loop.running)
+            reason = self._reason(zone, mode, demand, levels, order)
+        else:
+            # Past the setpoint but within the differential: the first
+            # unit keeps going at its minimum.
+            levels = {order[0]: 0.0} if order else {}
+            loop.running.clear()
+            loop.running.update(levels)
+            reason = self._holding_reason(zone, mode, differential, order)
+
         demands = dict(all_off)
         for unit_id, level in levels.items():
             demands[unit_id] = UnitDemand(mode=mode, level=level)
-
-        return ZoneDecision(
-            state, demands, self._reason(zone, mode, demand, levels, order)
-        )
+        return ZoneDecision(state, demands, reason)
 
     def _step_hours(self, memory: _ZoneMemory, now: datetime) -> float:
         last, memory.last_update = memory.last_update, now
@@ -204,6 +236,22 @@ class PIController(ZoneByZoneController):
         )
         return f"{where}, demand {demand:.0%}: {running}."
 
+    @staticmethod
+    def _holding_reason(
+        zone: ZoneSnapshot, mode: Mode, differential: float, order: list[str]
+    ) -> str:
+        assert zone.room_temperature is not None
+        if mode is Mode.HEAT:
+            setpoint, stop = zone.target, zone.target + differential
+        else:
+            setpoint = zone.target + zone.idle_band
+            stop = setpoint - differential
+        where = f"{zone.room_temperature:.1f} °C, at {setpoint:.1f}"
+        if not order:
+            return f"{where}, but no unit may {mode} right now."
+        first = zone.units[order[0]].name or order[0]
+        return f"{where}: #1 {first} at its minimum until {stop:.1f}."
+
     def dump_state(self) -> dict[str, Any]:
         return {
             zone_id: {
@@ -214,6 +262,7 @@ class PIController(ZoneByZoneController):
                 "last_update": memory.last_update.isoformat()
                 if memory.last_update
                 else None,
+                "active": memory.active,
             }
             for zone_id, memory in self._zones.items()
         }
@@ -234,4 +283,5 @@ class PIController(ZoneByZoneController):
                 last_update=datetime.fromisoformat(last_update)
                 if last_update
                 else None,
+                active=Mode(saved["active"]) if saved.get("active") else None,
             )
