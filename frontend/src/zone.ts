@@ -85,7 +85,7 @@ export function zoneWord(zone: Zone): string | undefined {
     case "cooling":
       return zone.shadow ? "Would cool" : "Cooling";
     case "idle":
-      return "Idle · in band";
+      return "Idle";
     case "off":
       return "Off";
     case "fault":

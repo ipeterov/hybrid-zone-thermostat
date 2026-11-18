@@ -205,10 +205,7 @@ const hass = makeHass();
 
 // What HA's frontend would do with these: open a dialog, change page.
 document.addEventListener("hass-more-info", (event) => {
-  window.hztCalls.push({
-    type: "more-info",
-    entityId: (event as CustomEvent).detail.entityId,
-  });
+  window.hztCalls.push({ type: "more-info", ...(event as CustomEvent).detail });
 });
 window.addEventListener("location-changed", () => {
   window.hztCalls.push({

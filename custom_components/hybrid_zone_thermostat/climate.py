@@ -76,7 +76,8 @@ class ZoneClimate(ZoneEntity, ClimateEntity):
         | ClimateEntityFeature.TURN_OFF
     )
     _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_target_temperature_step = 0.5
+    # A tenth: the card's drag sets any value a sensor can tell apart.
+    _attr_target_temperature_step = 0.1
     _attr_min_temp = 5
     _attr_max_temp = 35
 

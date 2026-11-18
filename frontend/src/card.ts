@@ -19,9 +19,9 @@ interface ZoneCardConfig {
   entity: string;
 }
 
-// The zone's own limits (climate.py: target step and range; the
-// set_idle_band service's range).
+// What − and + change the target by. Dragging sets it to a tenth.
 const STEP = 0.5;
+// The zone's own limits (climate.py's range; set_idle_band's range).
 const MIN_TARGET = 5;
 const MAX_TARGET = 35;
 const MIN_BAND = 0.5;
@@ -86,6 +86,56 @@ interface Settings {
   band: number;
 }
 
+// A value the card changed, as it's shown and sent: the target to a tenth,
+// the band to a fifth, so both its edges land on tenths too. Only the part
+// being changed is rounded: a stored 2.5 band stays 2.5.
+function rounded(
+  { target, band }: Settings,
+  part: "target" | "band",
+): Settings {
+  return part === "target"
+    ? { target: Math.round(target * 10) / 10, band }
+    : { target, band: Math.max(MIN_BAND, Math.round(band * 5) / 5) };
+}
+
+// A smooth line through points that never overshoots them (monotone cubic
+// interpolation, Fritsch–Carlson): the curve doesn't invent a peak the
+// room never reached.
+function monotonePath(points: readonly (readonly [number, number])[]): string {
+  const n = points.length;
+  if (n < 2) {
+    return "";
+  }
+  const dx: number[] = [];
+  const slope: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const [x0, y0] = points[i] as readonly [number, number];
+    const [x1, y1] = points[i + 1] as readonly [number, number];
+    dx.push(x1 - x0);
+    slope.push(x1 === x0 ? 0 : (y1 - y0) / (x1 - x0));
+  }
+  const tangent: number[] = [slope[0] ?? 0];
+  for (let i = 1; i < n - 1; i++) {
+    const a = slope[i - 1] ?? 0;
+    const b = slope[i] ?? 0;
+    tangent.push(a * b <= 0 ? 0 : (2 * a * b) / (a + b));
+  }
+  tangent.push(slope[n - 2] ?? 0);
+  const [startX, startY] = points[0] as readonly [number, number];
+  let d = `M${startX} ${startY}`;
+  for (let i = 0; i < n - 1; i++) {
+    const [x0, y0] = points[i] as readonly [number, number];
+    const [x1, y1] = points[i + 1] as readonly [number, number];
+    const h = (dx[i] ?? 0) / 3;
+    d += ` C${x0 + h} ${y0 + (tangent[i] ?? 0) * h} ${x1 - h} ${y1 - (tangent[i + 1] ?? 0) * h} ${x1} ${y1}`;
+  }
+  return d;
+}
+
+function partOf(handle: Handle): "target" | "band" {
+  return handle === "target" ? "target" : "band";
+}
+
 function clock(time: number): string {
   return new Date(time).toLocaleTimeString([], {
     hour: "2-digit",
@@ -122,7 +172,11 @@ export class HztZoneCard extends LitElement {
     unitHistory: { state: true },
     drag: { state: true },
     pending: { state: true },
+    menuOpen: { state: true },
+    chartWidth: { state: true },
   };
+
+  menuOpen = false;
 
   hass?: Hass;
   config?: ZoneCardConfig;
@@ -155,8 +209,29 @@ export class HztZoneCard extends LitElement {
     return { columns: 12, min_columns: 6 };
   }
 
+  // The chart's width in pixels, kept by a ResizeObserver.
+  chartWidth = 600;
+  private chartObserver?: ResizeObserver;
+
+  private observeChart() {
+    const chart = this.renderRoot.querySelector(".chart");
+    if (!chart || this.chartObserver) {
+      return;
+    }
+    this.chartObserver = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry?.contentRect.width ?? 0);
+      if (width > 0 && width !== this.chartWidth) {
+        this.chartWidth = width;
+      }
+    });
+    this.chartObserver.observe(chart);
+  }
+
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.chartObserver?.disconnect();
+    this.chartObserver = undefined;
+    this.toggleMenu(false);
     window.clearInterval(this.historyTimer);
     this.historyTimer = undefined;
     this.historyKey = undefined;
@@ -180,6 +255,7 @@ export class HztZoneCard extends LitElement {
   }
 
   protected updated(): void {
+    this.observeChart();
     // The history is fetched when the card appears, every few minutes,
     // and again once a new target or band is in HA's state.
     const zone = this.zone;
@@ -197,12 +273,13 @@ export class HztZoneCard extends LitElement {
     );
   }
 
-  // HA's conventions: a card opens the entity's more-info dialog, and
-  // navigates by pushing history and announcing it.
-  private moreInfo(entityId: string) {
+  // HA's conventions: a card opens the entity's more-info dialog (at one
+  // of its views: history, settings, related), and navigates by pushing
+  // history and announcing it.
+  private moreInfo(entityId: string, view?: string) {
     this.dispatchEvent(
       new CustomEvent("hass-more-info", {
-        detail: { entityId },
+        detail: view ? { entityId, view } : { entityId },
         bubbles: true,
         composed: true,
       }),
@@ -351,26 +428,27 @@ export class HztZoneCard extends LitElement {
     }
   }
 
-  // Where a handle would put things with the pointer at `t` degrees.
+  // Where a handle would put things with the pointer at `t` degrees. Not
+  // rounded: the handle follows the pointer exactly, and the value it
+  // stands for is rounded (rounded()) for display and when it's sent.
   private dragTo(drag: Drag, t: number): Settings {
     if (drag.handle === "target") {
       const half = drag.band / 2;
       return {
         target: clamp(
-          Math.round(t / STEP) * STEP,
+          t,
           Math.max(MIN_TARGET, drag.low + half),
           Math.min(MAX_TARGET, drag.high - half),
         ),
         band: drag.band,
       };
     }
-    // An edge: the band widens or narrows around the target, in half
-    // degrees, so each edge moves in quarters.
+    // An edge: the band widens or narrows around the target.
     const room = 2 * Math.min(drag.target - drag.low, drag.high - drag.target);
     return {
       target: drag.target,
       band: clamp(
-        Math.round((2 * Math.abs(t - drag.target)) / STEP) * STEP,
+        2 * Math.abs(t - drag.target),
         MIN_BAND,
         Math.min(MAX_BAND, room),
       ),
@@ -384,8 +462,9 @@ export class HztZoneCard extends LitElement {
       return;
     }
     event.preventDefault();
+    // No focus: a pointer drag would leave the handle lit as focused
+    // until a click elsewhere. Keyboard users reach it by Tab.
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    (event.currentTarget as HTMLElement).focus();
     const scale = this.scale(zone, settings);
     const { heatBelow, coolAbove } = bandEdges(settings.target, settings.band);
     const value = { target: settings.target, low: heatBelow, high: coolAbove }[
@@ -426,7 +505,7 @@ export class HztZoneCard extends LitElement {
     const zone = this.zone;
     this.drag = undefined;
     if (drag && zone && event.type === "pointerup") {
-      this.commit(zone, drag);
+      this.commit(zone, rounded(drag, partOf(drag.handle)));
     }
   }
 
@@ -441,17 +520,31 @@ export class HztZoneCard extends LitElement {
       return;
     }
     event.preventDefault();
+    // A tenth of a degree per press: the target by 0.1, each edge by 0.1
+    // (so the band by 0.2).
     if (handle === "target") {
-      this.commit(zone, {
-        ...settings,
-        target: clamp(settings.target + step * STEP, MIN_TARGET, MAX_TARGET),
-      });
+      this.commit(
+        zone,
+        rounded(
+          {
+            ...settings,
+            target: clamp(settings.target + step * 0.1, MIN_TARGET, MAX_TARGET),
+          },
+          "target",
+        ),
+      );
     } else {
       const outward = handle === "high" ? step : -step;
-      this.commit(zone, {
-        ...settings,
-        band: clamp(settings.band + outward * STEP, MIN_BAND, MAX_BAND),
-      });
+      this.commit(
+        zone,
+        rounded(
+          {
+            ...settings,
+            band: clamp(settings.band + outward * 0.2, MIN_BAND, MAX_BAND),
+          },
+          "band",
+        ),
+      );
     }
   }
 
@@ -476,40 +569,69 @@ export class HztZoneCard extends LitElement {
         <div class="aurora two ${glow ? "on" : ""}"></div>
       </div>
       ${this.renderHead(zone)} ${this.renderNumbers(zone)}
-      ${this.renderBand(zone)} ${this.renderHistory(zone)}
-      ${
-        zone.reason && zone.state !== "off"
-          ? html`<p class="reason"><strong>Why:</strong> ${zone.reason}</p>`
-          : nothing
-      }
-      ${
-        zone.shadow
-          ? html`<p class="small">
-            Shadow mode: HZT decides but sends nothing to the units.
-            <a
-              href=${this.settingsPath(zone)}
-              @click=${(e: MouseEvent) => {
-                e.preventDefault();
-                this.navigate(this.settingsPath(zone));
-              }}
-              >Go live in Climate zones</a
-            >
-          </p>`
-          : nothing
-      }
-      ${this.renderUnits(zone)}
+      ${this.renderBand(zone)} ${this.renderStatus(zone)}
+      ${this.renderHistory(zone)} ${this.renderUnits(zone)}
     </ha-card>`;
   }
 
-  private renderHead(zone: Zone) {
+  // What the zone is doing and why, as one line: the state leads, the
+  // controller's reason follows.
+  private renderStatus(zone: Zone) {
     const word = zoneWord(zone);
+    if (!word) {
+      return nothing;
+    }
+    const reason =
+      zone.state === "off" ? "Nothing runs until it’s turned on." : zone.reason;
+    // In shadow mode the word is "Would heat": the note under it says why
+    // nothing happens, and how to change that.
+    return html`<div class="status ${zone.state ?? ""}">
+      <p role="status">
+        <strong>${word}</strong>${reason ? html`<span> · ${reason}</span>` : nothing}
+      </p>
+      ${
+        zone.shadow
+          ? html`<p class="shadow-note">
+            Shadow mode: HZT decides but sends nothing to the units.
+            ${this.settingsLink(zone, "Go live in Climate zones")}
+          </p>`
+          : nothing
+      }
+    </div>`;
+  }
+
+  private settingsLink(zone: Zone, text: string) {
+    return html`<a
+      href=${this.settingsPath(zone)}
+      @click=${(e: MouseEvent) => {
+        e.preventDefault();
+        this.navigate(this.settingsPath(zone));
+      }}
+      >${text}</a
+    >`;
+  }
+
+  private renderHead(zone: Zone) {
+    // HZT's own settings first; then HA's views of the zone's entity,
+    // opened straight at the useful part of its dialog.
+    const item = (label: string, run: () => void) => html`<button
+      role="menuitem"
+      @click=${() => {
+        this.toggleMenu(false);
+        run();
+      }}
+    >
+      ${label}
+    </button>`;
+    const menu = html`${item("Zone settings", () =>
+      this.navigate(this.settingsPath(zone)),
+    )}
+      <div class="menu-caption" role="presentation">In Home Assistant</div>
+      ${item("History", () => this.moreInfo(zone.entityId, "history"))}
+      ${item("Entity settings", () => this.moreInfo(zone.entityId, "settings"))}
+      ${item("Related", () => this.moreInfo(zone.entityId, "related"))}`;
     return html`<div class="head">
-      <h2>
-        <button class="link" @click=${() => this.moreInfo(zone.entityId)}>
-          ${zone.name}
-        </button>
-      </h2>
-      ${word ? html`<span class="chip ${zone.state ?? ""}">${word}</span>` : nothing}
+      <h2>${zone.name}</h2>
       <button
         class="icon power ${zone.enabled ? "on" : ""}"
         aria-label=${zone.enabled ? `Turn ${zone.name} off` : `Turn ${zone.name} on`}
@@ -523,24 +645,55 @@ export class HztZoneCard extends LitElement {
           <path d="M12 3v8M6.3 7.3a8 8 0 1 0 11.4 0" />
         </svg>
       </button>
-      <a
-        class="icon settings"
-        href=${this.settingsPath(zone)}
-        aria-label="${zone.name} settings"
-        @click=${(e: MouseEvent) => {
-          e.preventDefault();
-          this.navigate(this.settingsPath(zone));
-        }}
-      >
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-          <circle cx="12" cy="12" r="3" />
-          <path
-            d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"
-          />
-        </svg>
-      </a>
+      <div class="menu-anchor">
+        <button
+          class="icon more"
+          aria-label="More for ${zone.name}"
+          aria-haspopup="menu"
+          aria-expanded=${this.menuOpen ? "true" : "false"}
+          @click=${() => this.toggleMenu()}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <circle cx="12" cy="5" r="1.8" />
+            <circle cx="12" cy="12" r="1.8" />
+            <circle cx="12" cy="19" r="1.8" />
+          </svg>
+        </button>
+        ${
+          this.menuOpen
+            ? html`<div class="menu" role="menu">
+              ${menu}
+            </div>`
+            : nothing
+        }
+      </div>
     </div>`;
   }
+
+  // The menu closes on a choice, a click anywhere else, or Escape.
+  private toggleMenu(open = !this.menuOpen) {
+    this.menuOpen = open;
+    if (open) {
+      document.addEventListener("pointerdown", this.closeOutside, true);
+      document.addEventListener("keydown", this.closeOnEscape, true);
+    } else {
+      document.removeEventListener("pointerdown", this.closeOutside, true);
+      document.removeEventListener("keydown", this.closeOnEscape, true);
+    }
+  }
+
+  private closeOutside = (event: Event) => {
+    const anchor = this.renderRoot.querySelector(".menu-anchor");
+    if (anchor && !event.composedPath().includes(anchor)) {
+      this.toggleMenu(false);
+    }
+  };
+
+  private closeOnEscape = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      this.toggleMenu(false);
+    }
+  };
 
   private renderNumbers(zone: Zone) {
     const sensor = zone.roomSensor
@@ -582,26 +735,32 @@ export class HztZoneCard extends LitElement {
               aria-label="Lower the target"
               ?disabled=${settings.target <= MIN_TARGET}
               @click=${() =>
-                this.commit(zone, {
-                  ...settings,
-                  target: settings.target - STEP,
-                })}
+                this.commit(
+                  zone,
+                  rounded(
+                    { ...settings, target: settings.target - STEP },
+                    "target",
+                  ),
+                )}
             >
               −
             </button>
             <div class="target-value">
               <span class="label">Target</span>
-              <span class="mid">${settings.target.toFixed(1)}</span>
+              <span class="mid">${rounded(settings, "target").target.toFixed(1)}</span>
             </div>
             <button
               class="step"
               aria-label="Raise the target"
               ?disabled=${settings.target >= MAX_TARGET}
               @click=${() =>
-                this.commit(zone, {
-                  ...settings,
-                  target: settings.target + STEP,
-                })}
+                this.commit(
+                  zone,
+                  rounded(
+                    { ...settings, target: settings.target + STEP },
+                    "target",
+                  ),
+                )}
             >
               +
             </button>
@@ -617,8 +776,13 @@ export class HztZoneCard extends LitElement {
     if (settings === undefined || !zone.enabled) {
       return nothing;
     }
+    // Positions follow a drag exactly; the numbers are what will be sent.
     const { target, band } = settings;
     const { heatBelow, coolAbove } = bandEdges(target, band);
+    const shown = this.drag
+      ? rounded(settings, partOf(this.drag.handle))
+      : settings;
+    const shownEdges = bandEdges(shown.target, shown.band);
     const { low, high } = this.scale(zone, settings);
     const room = zone.room;
     const at = (t: number) =>
@@ -628,14 +792,16 @@ export class HztZoneCard extends LitElement {
       {
         which: "low" as const,
         value: heatBelow,
+        shown: shownEdges.heatBelow,
+        words: "Heats below",
         label: "Heating starts below",
-        text: `Heats below ${degrees(heatBelow)}`,
       },
       {
         which: "high" as const,
         value: coolAbove,
+        shown: shownEdges.coolAbove,
+        words: "Cools above",
         label: "Cooling starts above",
-        text: `Cools above ${degrees(coolAbove)}`,
       },
     ];
     return html`<div
@@ -647,7 +813,7 @@ export class HztZoneCard extends LitElement {
       <div
         class="band-track"
         role="img"
-        aria-label="Heats below ${degrees(heatBelow)}, idle up to ${degrees(coolAbove)}, cools above${
+        aria-label="Heats below ${degrees(shownEdges.heatBelow)}, idle up to ${degrees(shownEdges.coolAbove)}, cools above${
           room === undefined ? "" : `; the room is ${degrees(room)}`
         }"
       >
@@ -657,29 +823,41 @@ export class HztZoneCard extends LitElement {
           style="left:${at(heatBelow)};right:calc(100% - ${at(coolAbove)})"
         ></span>
         <span class="seg cool" style="left:${at(coolAbove)};right:0"></span>
-        <span class="tick" style="left:${at(heatBelow)}"></span>
-        <span class="tick" style="left:${at(coolAbove)}"></span>
+        ${edges.map(
+          // The edge itself can be grabbed too; it lights up with its label.
+          (edge) => html`<span
+            class="tick ${edge.which} ${active === edge.which ? "active" : ""}"
+            style="left:${at(edge.value)}"
+            aria-hidden="true"
+            @pointerdown=${(e: PointerEvent) => this.startDrag(e, edge.which)}
+            ><span class="tick-line"></span
+          ></span>`,
+        )}
+        ${
+          // The room comes down from above: a flag with its reading, its
+          // tail pointing into a needle through the bar.
+          room === undefined
+            ? nothing
+            : html`<span class="reading" style="--at:${at(room)}">
+                <span class="flag">${room.toFixed(1)}°</span>
+                <span class="needle"></span>
+              </span>`
+        }
         <span
-          class="knob ${active === "target" ? "active" : ""}"
+          class="hand ${active === "target" ? "active" : ""}"
           style="left:${at(target)}"
           role="slider"
           tabindex="0"
           aria-label="Target"
           aria-valuemin=${MIN_TARGET}
           aria-valuemax=${MAX_TARGET}
-          aria-valuenow=${target}
-          aria-valuetext="Target ${degrees(target)}"
+          aria-valuenow=${shown.target}
+          aria-valuetext="Target ${degrees(shown.target)}"
           @pointerdown=${(e: PointerEvent) => this.startDrag(e, "target")}
           @keydown=${(e: KeyboardEvent) => this.onHandleKey(e, "target")}
         >
-          <span class="knob-face"></span>
-          <span class="bubble">${target.toFixed(1)}</span>
+          <span class="hand-face"></span>
         </span>
-        ${
-          room === undefined
-            ? nothing
-            : html`<span class="pin" style="left:${at(room)}"></span>`
-        }
       </div>
       <div class="band-scale">
         ${edges.map(
@@ -689,12 +867,13 @@ export class HztZoneCard extends LitElement {
             role="slider"
             tabindex="0"
             aria-label=${edge.label}
-            aria-valuenow=${edge.value}
-            aria-valuetext=${edge.text}
+            aria-valuenow=${edge.shown}
+            aria-valuetext="${edge.words} ${degrees(edge.shown)}"
             @pointerdown=${(e: PointerEvent) => this.startDrag(e, edge.which)}
             @keydown=${(e: KeyboardEvent) => this.onHandleKey(e, edge.which)}
-            >${edge.which === "low" ? "Heats below" : "Cools above"}
-            <strong>${tenths(edge.value)}</strong></span
+            ><span
+              >${edge.words} <strong>${tenths(edge.shown)}</strong></span
+            ></span
           >`,
         )}
       </div>
@@ -736,7 +915,8 @@ export class HztZoneCard extends LitElement {
     ];
     const low = Math.floor(Math.min(...temps) - 0.3);
     const high = Math.ceil(Math.max(...temps) + 0.3);
-    const width = 600;
+    // Drawn at the chart's real size, so lines aren't stretched.
+    const width = this.chartWidth;
     const height = 104;
     const x = (time: number) =>
       ((Math.max(time, from) - from) / (now - from)) * width;
@@ -760,16 +940,39 @@ export class HztZoneCard extends LitElement {
     const bandPath = set.length
       ? `M${edgePath(1, set).slice(1)} ${edgePath(-1, [...set].reverse())} Z`
       : "";
-    const targetPath = set.length
-      ? `M${set
-          .map(
-            (s) => `${x(s.start)} ${y(s.target)} L${x(s.end)} ${y(s.target)}`,
-          )
-          .join(" L")}`
-      : "";
-    const roomPath = rooms
-      .map((p, i) => `${i ? "L" : "M"}${x(p.time)} ${y(p.room as number)}`)
-      .join(" ");
+    // The room, averaged over ten-minute buckets: a sensor's 0.1 °C
+    // flicker would otherwise draw as fuzz, and the day's shape is the
+    // point. The latest reading ends the line as it is.
+    const bucket = 10 * 60_000;
+    const buckets = new Map<number, { sum: number; count: number }>();
+    for (const p of rooms.slice(0, -1)) {
+      const key = Math.floor(Math.max(p.time, from) / bucket);
+      const entry = buckets.get(key) ?? { sum: 0, count: 0 };
+      entry.sum += p.room as number;
+      entry.count += 1;
+      buckets.set(key, entry);
+    }
+    const means = [...buckets].map(([key, { sum, count }]) => ({
+      time: (key + 0.5) * bucket,
+      room: sum / count,
+    }));
+    // Then a rolling mean over five buckets (50 minutes): readings come in
+    // 0.1 °C steps, which ten-minute means turn into stairs. At 24 hours
+    // across a card, a pixel is a couple of minutes, so nothing real is
+    // lost.
+    const smooth = [
+      ...means.map((p, i) => {
+        const window = means.slice(Math.max(0, i - 2), i + 3);
+        return {
+          time: p.time,
+          room: window.reduce((total, w) => total + w.room, 0) / window.length,
+        };
+      }),
+      rooms.at(-1) as { time: number; room: number },
+    ];
+    const roomPath = monotonePath(
+      smooth.map((p) => [x(p.time), y(p.room)] as const),
+    );
     // The temperature axis: whole degrees, a label every degree or two.
     const every = high - low > 6 ? 2 : 1;
     const ticks: number[] = [];
@@ -781,16 +984,15 @@ export class HztZoneCard extends LitElement {
         <svg
           class="chart"
           viewBox="0 0 ${width} ${height}"
-          preserveAspectRatio="none"
           role="img"
           aria-label="Room temperature against the idle band over the last ${HISTORY_HOURS} hours"
         >
           ${ticks.map(
             (t) =>
-              svg`<line class="h-grid" x1="0" x2=${width} y1=${y(t)} y2=${y(t)}></line>`,
+              // On a half pixel, so a 1 px line is one crisp row.
+              svg`<line class="h-grid" x1="0" x2=${width} y1=${Math.round(y(t)) + 0.5} y2=${Math.round(y(t)) + 0.5}></line>`,
           )}
           <path class="h-idle" d=${bandPath}></path>
-          <path class="h-target" d=${targetPath}></path>
           <path class="h-room" d=${roomPath}></path>
         </svg>
         ${ticks.map(
@@ -941,7 +1143,8 @@ export class HztZoneCard extends LitElement {
   private renderUnits(zone: Zone) {
     if (zone.units.length === 0) {
       return html`<p class="small">
-        No room units yet: add them on the Climate zones page.
+        No room units yet:
+        ${this.settingsLink(zone, "add them in Climate zones")}.
       </p>`;
     }
     // The order that applies is the one for what the zone is doing; idle
@@ -963,7 +1166,10 @@ export class HztZoneCard extends LitElement {
       heading = `Room units, in ${direction === "heat" ? "heating" : "cooling"} order`;
     }
     return html`<div class="units">
-      <h3 class="eyebrow">${heading}</h3>
+      <div class="units-head">
+        <h3 class="eyebrow">${heading}</h3>
+        ${this.settingsLink(zone, "Configure")}
+      </div>
       ${units.map((unit) => this.renderUnit(zone, unit, rankOf(unit)))}
     </div>`;
   }
@@ -1102,20 +1308,6 @@ export class HztZoneCard extends LitElement {
       align-items: center;
       gap: 10px;
     }
-    .chip {
-      border-radius: 999px;
-      padding: 4px 12px;
-      font-size: 13px;
-      font-weight: 500;
-      background: var(--hzt-subtle);
-      white-space: nowrap;
-    }
-    .chip.heating {
-      background: color-mix(in srgb, var(--hzt-heat) 18%, var(--hzt-card));
-    }
-    .chip.cooling {
-      background: color-mix(in srgb, var(--hzt-cool) 18%, var(--hzt-card));
-    }
     button {
       font: inherit;
       color: var(--hzt-text);
@@ -1125,20 +1317,29 @@ export class HztZoneCard extends LitElement {
       opacity: 0.4;
       cursor: default;
     }
-    .icon.power {
+    /* The header's two buttons, alike: borderless, a wash on hover. The
+       power button is filled while the zone is on. */
+    .icon {
       width: 40px;
       height: 40px;
       flex: none;
+      border: 0;
       border-radius: 12px;
-      border: 1px solid var(--hzt-border);
       background: none;
       display: flex;
       align-items: center;
       justify-content: center;
       color: var(--hzt-muted);
     }
+    .icon:hover {
+      background: var(--hzt-subtle);
+    }
     .icon.power.on {
+      background: var(--hzt-subtle);
       color: var(--hzt-text);
+    }
+    .icon.power.on:hover {
+      background: color-mix(in srgb, var(--hzt-text) 16%, var(--hzt-card));
     }
     .icon.power path {
       fill: none;
@@ -1146,24 +1347,50 @@ export class HztZoneCard extends LitElement {
       stroke-width: 2;
       stroke-linecap: round;
     }
-    .icon.settings {
-      width: 40px;
-      height: 40px;
-      flex: none;
-      border-radius: 12px;
+    .icon.more circle {
+      fill: currentColor;
+    }
+    .menu-anchor {
+      position: relative;
+    }
+    .menu {
+      position: absolute;
+      top: 44px;
+      right: 0;
+      z-index: 2;
+      min-width: 220px;
+      padding: 6px;
       display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--hzt-muted);
+      flex-direction: column;
+      border-radius: 12px;
+      background: var(--hzt-card);
+      border: 1px solid var(--hzt-border);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
     }
-    .icon.settings:hover {
+    .menu button {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 16px;
+      min-height: 40px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 8px;
+      background: none;
+      font-size: 14px;
+      text-align: left;
+    }
+    .menu button:hover,
+    .menu button:focus-visible {
       background: var(--hzt-subtle);
+      outline: none;
     }
-    .icon.settings circle,
-    .icon.settings path {
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 1.8;
+    .menu-caption {
+      margin: 6px 10px 2px;
+      padding-top: 8px;
+      border-top: 1px solid var(--hzt-border);
+      font-size: 12px;
+      color: var(--hzt-muted);
     }
     button.link {
       border: 0;
@@ -1292,19 +1519,34 @@ export class HztZoneCard extends LitElement {
       line-height: 1.45;
       color: var(--hzt-muted);
     }
-    .reason {
+    /* What the zone is doing, then why; tinted while it heats or cools. */
+    .status {
       background: var(--hzt-subtle);
       border-radius: 12px;
       padding: 10px 12px;
       font-size: 14px;
       line-height: 1.5;
     }
-    .reason strong {
+    .shadow-note {
+      margin-top: 4px;
+      font-size: 13px;
+      color: var(--hzt-muted);
+    }
+    .status strong {
       font-weight: 500;
     }
+    .status span {
+      color: var(--hzt-muted);
+    }
+    .status.heating {
+      background: color-mix(in srgb, var(--hzt-heat) 14%, var(--hzt-card));
+    }
+    .status.cooling {
+      background: color-mix(in srgb, var(--hzt-cool) 14%, var(--hzt-card));
+    }
 
-    /* The band. Everything slides to its new place; while a handle is
-       held, quickly, so it glides from step to step under the finger. */
+    /* The band. Everything slides to its new place, except while a handle
+       is held: then it follows the pointer exactly. */
     .band {
       display: flex;
       flex-direction: column;
@@ -1314,8 +1556,7 @@ export class HztZoneCard extends LitElement {
     }
     .band .seg,
     .band .tick,
-    .band .pin,
-    .band .knob,
+    .band .hand,
     .band-scale .edge {
       transition:
         left 300ms ease,
@@ -1324,29 +1565,35 @@ export class HztZoneCard extends LitElement {
     }
     .band.dragging .seg,
     .band.dragging .tick,
-    .band.dragging .knob,
+    .band.dragging .hand,
     .band.dragging .edge {
-      transition-duration: 110ms;
-      transition-timing-function: ease-out;
+      transition: none;
+    }
+    .band.dragging,
+    .band.dragging * {
+      cursor: grabbing !important;
     }
     @media (prefers-reduced-motion: reduce) {
       .band .seg,
       .band .tick,
-      .band .pin,
-      .band .knob,
+      .band .flag,
+      .band .needle,
+      .band .hand,
       .band-scale .edge,
-      .knob-face,
-      .bubble {
+      .hand-face::after {
         transition: none !important;
       }
     }
+    /* Rows of the track, top down: the room's flag (0-17) and pointer down
+       to the bar's middle (17-34), the bar (30-38), the set hand up to the
+       bar's middle (34-51). */
     .band-track {
       position: relative;
-      height: 28px;
+      height: 56px;
     }
     .seg {
       position: absolute;
-      top: 10px;
+      top: 30px;
       height: 8px;
     }
     .seg.heat {
@@ -1360,101 +1607,157 @@ export class HztZoneCard extends LitElement {
       background: color-mix(in srgb, var(--hzt-cool) 40%, var(--hzt-card));
       border-radius: 0 4px 4px 0;
     }
+    /* An edge: a line with a 20 px hit area, lit together with its label;
+       above the hand's hit area, so an edge near the target can still be
+       grabbed. */
     .tick {
       position: absolute;
-      top: 6px;
-      width: 2px;
-      height: 16px;
-      margin-left: -1px;
-      background: var(--hzt-muted);
+      z-index: 2;
+      top: 24px;
+      width: 20px;
+      height: 20px;
+      margin-left: -10px;
+      display: flex;
+      justify-content: center;
+      cursor: grab;
+      touch-action: none;
     }
-    /* The room: a dot, under the target's ring when they meet. */
-    .pin {
-      position: absolute;
-      top: 9px;
-      width: 10px;
-      height: 10px;
-      margin-left: -5px;
-      border-radius: 5px;
+    .tick-line {
+      width: 2px;
+      height: 100%;
+      border-radius: 1px;
+      background: var(--hzt-muted);
+      transition:
+        width 140ms ease,
+        background 140ms ease;
+    }
+    .tick:hover .tick-line,
+    .tick.active .tick-line,
+    .band:has(.edge.low:hover, .edge.low:focus-visible) .tick.low .tick-line,
+    .band:has(.edge.high:hover, .edge.high:focus-visible)
+      .tick.high
+      .tick-line {
+      width: 4px;
       background: var(--hzt-text);
+    }
+    /* The room, from above: a flag with its reading (kept inside the
+       card), its tail pointing into a hairline needle through the bar. */
+    .reading {
+      position: absolute;
+      inset: 0;
       pointer-events: none;
     }
-    /* The target: a ring to grab, with a 44 px hit area. */
-    .knob {
+    .flag {
       position: absolute;
-      top: -8px;
-      width: 44px;
-      height: 44px;
-      margin-left: -22px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      top: 0;
+      left: clamp(22px, var(--at), calc(100% - 22px));
+      transform: translateX(-50%);
+      padding: 0 6px;
+      border-radius: 6px;
+      background: var(--hzt-text);
+      color: var(--hzt-card);
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 17px;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      transition: left 300ms ease;
+    }
+    /* The room's pointer and the set hand are mirror images about the
+       bar's middle (34): a 12 × 10 triangle 7-17 px from it, and a 2 px
+       line from the triangle's tip to the middle. */
+    .needle {
+      position: absolute;
+      top: 17px;
+      left: var(--at);
+      width: 0;
+      height: 17px;
+      transition: left 300ms ease;
+    }
+    .needle::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: -6px;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 10px solid var(--hzt-text);
+    }
+    .needle::after {
+      content: "";
+      position: absolute;
+      top: 9px;
+      left: -1px;
+      width: 2px;
+      bottom: 0;
+      background: var(--hzt-text);
+    }
+    /* The target, from below: a set hand, as on a barometer, that you
+       turn to where you want the room. Its line meets the bar from the
+       other side, so the room's needle reads against it, and the band
+       around it shows that close is the goal, not exact. */
+    .hand {
+      --hand: var(--hzt-hand, #e8b04a);
+      position: absolute;
+      top: 28px;
+      width: 28px;
+      height: 30px;
+      margin-left: -14px;
       cursor: grab;
       touch-action: none;
       outline: none;
       z-index: 1;
     }
-    .knob.active {
-      cursor: grabbing;
-    }
-    .knob-face {
-      width: 22px;
-      height: 22px;
-      box-sizing: border-box;
-      border-radius: 50%;
-      border: 3px solid var(--hzt-text);
-      background: transparent;
-      box-shadow: 0 0 0 3px var(--hzt-card);
-      transition:
-        transform 160ms ease,
-        box-shadow 160ms ease;
-    }
-    .knob:hover .knob-face,
-    .knob:focus-visible .knob-face {
-      box-shadow:
-        0 0 0 3px var(--hzt-card),
-        0 0 0 9px color-mix(in srgb, var(--hzt-text) 14%, transparent);
-    }
-    .knob.active .knob-face {
-      transform: scale(1.25);
-      box-shadow:
-        0 0 0 3px var(--hzt-card),
-        0 0 0 10px color-mix(in srgb, var(--hzt-text) 18%, transparent);
-    }
-    .bubble {
+    .hand-face {
       position: absolute;
-      bottom: 40px;
-      left: 50%;
-      padding: 3px 8px;
-      border-radius: 8px;
-      background: var(--hzt-text);
-      color: var(--hzt-card);
-      font-size: 13px;
-      font-weight: 500;
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-      pointer-events: none;
-      opacity: 0;
-      transform: translate(-50%, 6px) scale(0.9);
-      transition:
-        opacity 140ms ease,
-        transform 140ms ease;
+      inset: 0;
     }
-    .knob.active .bubble {
-      opacity: 1;
-      transform: translate(-50%, 0) scale(1);
+    .hand-face::before {
+      content: "";
+      position: absolute;
+      /* Up to the bar's middle, where the room's needle meets it. */
+      top: 6px;
+      left: calc(50% - 1px);
+      width: 2px;
+      height: 10px;
+      background: var(--hand);
+    }
+    .hand-face::after {
+      content: "";
+      position: absolute;
+      top: 13px;
+      left: calc(50% - 6px);
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 10px solid var(--hand);
+      transition: transform 140ms ease;
+      transform-origin: 50% 0;
+    }
+    .hand:hover .hand-face::after,
+    .hand:focus-visible .hand-face::after,
+    .hand.active .hand-face::after {
+      transform: scale(1.3);
+    }
+    .hand:focus-visible {
+      border-radius: 6px;
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--hand) 50%, transparent);
     }
     /* The band's edges, as handles below it that say the rule: the lower
        one hangs left of its edge and the upper one right, so they never
        overlap, and both stay inside the card. */
+    /* Pulled up under the track, so each label hangs straight from its
+       edge's tick; the hand sits between them. */
     .band-scale {
       --edge-width: 128px;
       position: relative;
-      height: 32px;
+      height: 28px;
+      /* The track is 56 tall and the band's rows are 2 apart; the ticks
+         end at 44. */
+      margin-top: -14px;
     }
     .edge {
       position: absolute;
-      top: 2px;
+      top: 0;
       width: var(--edge-width);
       height: 28px;
       box-sizing: border-box;
@@ -1465,7 +1768,7 @@ export class HztZoneCard extends LitElement {
       border-radius: 8px;
       font-size: 12px;
       color: var(--hzt-muted);
-      cursor: ew-resize;
+      cursor: grab;
       touch-action: none;
       outline: none;
       white-space: nowrap;
@@ -1497,12 +1800,14 @@ export class HztZoneCard extends LitElement {
     }
     .edge.low:hover,
     .edge.low:focus-visible,
-    .edge.low.active {
+    .edge.low.active,
+    .band:has(.tick.low:hover) .edge.low {
       background: color-mix(in srgb, var(--hzt-heat) 30%, var(--hzt-card));
     }
     .edge.high:hover,
     .edge.high:focus-visible,
-    .edge.high.active {
+    .edge.high.active,
+    .band:has(.tick.high:hover) .edge.high {
       background: color-mix(in srgb, var(--hzt-cool) 30%, var(--hzt-card));
     }
 
@@ -1525,9 +1830,9 @@ export class HztZoneCard extends LitElement {
       overflow: visible;
     }
     .h-grid {
-      stroke: var(--hzt-border);
+      stroke: color-mix(in srgb, var(--hzt-border) 55%, transparent);
       stroke-width: 1;
-      vector-effect: non-scaling-stroke;
+      shape-rendering: crispEdges;
     }
     .y-label {
       position: absolute;
@@ -1575,14 +1880,8 @@ export class HztZoneCard extends LitElement {
       stroke: var(--hzt-text);
       stroke-width: 2;
       stroke-linejoin: round;
-      vector-effect: non-scaling-stroke;
-    }
-    .h-target {
-      fill: none;
-      stroke: var(--hzt-muted);
-      stroke-width: 1;
-      stroke-dasharray: 3 4;
-      vector-effect: non-scaling-stroke;
+      stroke-linecap: round;
+      shape-rendering: geometricPrecision;
     }
     .chart-scale {
       display: flex;
@@ -1628,6 +1927,23 @@ export class HztZoneCard extends LitElement {
     .units {
       display: flex;
       flex-direction: column;
+    }
+    /* The heading, with a quiet link to set the units up on the right. */
+    .units-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+    .units-head a {
+      font-size: 12px;
+      color: var(--hzt-muted);
+      text-decoration: none;
+    }
+    .units-head a:hover {
+      color: var(--hzt-text);
+      text-decoration: underline;
     }
     .eyebrow {
       margin: 0 0 4px;

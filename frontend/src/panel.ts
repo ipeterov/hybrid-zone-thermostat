@@ -725,15 +725,20 @@ export class HztPanel extends LitElement {
                 }),
               )}
           >
-            ${[0.5, 1, 1.5, 2, 2.5, 3].map(
-              (band) =>
-                html`<option
+            ${[
+              // The card can set any band; it's listed among these.
+              ...new Set([0.5, 1, 1.5, 2, 2.5, 3, zone.idle_band]),
+            ]
+              .sort((a, b) => a - b)
+              .map(
+                (band) =>
+                  html`<option
                   value=${band}
                   ?selected=${band === zone.idle_band}
                 >
                   ±${tenths(band / 2)} °C
                 </option>`,
-            )}
+              )}
           </select>
           <small>Heats below ${tenths(heatBelow)}, cools above ${tenths(coolAbove)}</small>
         </label>
