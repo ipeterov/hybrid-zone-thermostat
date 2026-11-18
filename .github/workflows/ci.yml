@@ -9,11 +9,12 @@ permissions:
   contents: read
 
 # A public repository: GitHub's own runners cost nothing, so every job is on
-# them.
+# them. A named image, not ubuntu-latest, so the OS changes only when this
+# file does (and `-latest` moving warns on every job).
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -48,7 +49,7 @@ jobs:
   # inside a real Home Assistant core, at the version uv.lock pins.
   python-tests:
     name: Python Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -73,7 +74,7 @@ jobs:
   # The panel and card on the harness page, in Chromium.
   browser-tests:
     name: Browser Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -103,7 +104,7 @@ jobs:
   # HA's own validator: manifest.json, strings.json, translations.
   hassfest:
     name: Hassfest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - uses: home-assistant/actions/hassfest@master
@@ -112,7 +113,7 @@ jobs:
   # home-assistant/brands, which only matters for HACS's default list.
   hacs:
     name: HACS
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: hacs/action@main
         with:
@@ -132,7 +133,7 @@ jobs:
       - hassfest
       - hacs
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:

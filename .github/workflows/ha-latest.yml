@@ -14,7 +14,7 @@ permissions:
 jobs:
   python-tests:
     name: Python Tests on the newest HA
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 

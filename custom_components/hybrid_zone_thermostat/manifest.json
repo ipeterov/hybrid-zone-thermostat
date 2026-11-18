@@ -1,6 +1,10 @@
 {
   "domain": "hybrid_zone_thermostat",
   "name": "Hybrid Zone Thermostat",
+  "categories": [
+    "climate.thermostats_heating",
+    "climate.heat_pumps_air_conditioning"
+  ],
   "codeowners": ["@ipeterov"],
   "config_flow": true,
   "dependencies": ["frontend", "http", "panel_custom", "websocket_api"],
