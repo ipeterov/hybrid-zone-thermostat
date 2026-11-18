@@ -77,6 +77,44 @@ function setAttribute(entityId: string, changes: Record<string, unknown>) {
   }
 }
 
+// A day of a zone's history: the room drifting up through the afternoon,
+// cooling for a while, then settling. Compressed rows, as HA sends them.
+function fakeHistory(entityIds: string[]) {
+  const now = Date.now() / 1000;
+  const result: Record<string, unknown[]> = {};
+  for (const entityId of entityIds) {
+    if (typeof states[entityId]?.attributes.hzt_zone_id !== "string") {
+      continue; // a sensor: filled in from its zone below
+    }
+    const target = Number(states[entityId]?.attributes.temperature ?? 22);
+    const rows = [];
+    for (let i = 0; i <= 96; i++) {
+      const hours = 24 - i / 4;
+      const room = target + 1.2 + 1.8 * Math.sin((i / 96) * Math.PI * 1.6);
+      const zoneState = room > target + 1.5 ? "cooling" : "idle";
+      rows.push({
+        s: "heat_cool",
+        a: {
+          current_temperature: Math.round(room * 10) / 10,
+          temperature: target,
+          zone_state: zoneState,
+        },
+        lu: now - hours * 3600,
+      });
+    }
+    result[entityId] = rows;
+    // The room sensor, if the zone has one: the same curve as its state.
+    const sensor = states[entityId]?.attributes.room_sensor;
+    if (typeof sensor === "string") {
+      result[sensor] = rows.map((row) => ({
+        s: String(row.a.current_temperature),
+        lu: row.lu,
+      }));
+    }
+  }
+  return result;
+}
+
 function makeHass(): Hass {
   return {
     states,
@@ -104,6 +142,11 @@ function makeHass(): Hass {
       }
       if (message.type === "hybrid_zone_thermostat/config") {
         return Promise.resolve(config as T);
+      }
+      if (message.type === "history/history_during_period") {
+        return Promise.resolve(
+          fakeHistory(message.entity_ids as string[]) as T,
+        );
       }
       if (message.type === "hybrid_zone_thermostat/config/save") {
         config = message.config as HouseConfig;

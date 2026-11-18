@@ -180,15 +180,60 @@ function lastCall(page: Page, type: string) {
   );
 }
 
-test("clicking the card opens the zone, as HA cards do", async ({ page }) => {
+test("clicking the card opens its zone dialog", async ({ page }) => {
   await openCards(page, FIXTURES["just-the-ac"]);
 
   await card(page, "Living room").getByText("Room", { exact: true }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Living room" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(/Target\s*23\.0/);
+  await expect(dialog).toContainText("Last 24 hours");
+  await expect(
+    dialog.getByRole("img", { name: /Room temperature and target/ }),
+  ).toBeVisible();
+  expect(await lastCall(page, "more-info")).toBeUndefined();
+});
+
+test("the zone's name opens the dialog too, and Escape closes it", async ({
+  page,
+}) => {
+  await openCards(page, FIXTURES["just-the-ac"]);
+
+  await card(page, "Living room")
+    .getByRole("button", { name: "Living room", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("the dialog leads on to HA's own dialog", async ({ page }) => {
+  await openCards(page, FIXTURES["just-the-ac"]);
+  await card(page, "Living room").getByText("Room", { exact: true }).click();
+
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "History and settings in Home Assistant" })
+    .click();
 
   expect(await lastCall(page, "more-info")).toEqual({
     type: "more-info",
     entityId: "climate.living_room",
   });
+});
+
+test("the dialog's controls work like the card's", async ({ page }) => {
+  await openCards(page, FIXTURES["just-the-ac"]);
+  await card(page, "Living room").getByText("Room", { exact: true }).click();
+  const dialog = page.getByRole("dialog");
+
+  await dialog.getByRole("button", { name: "Raise the target" }).click();
+
+  await expect(dialog).toContainText(/Target\s*23\.5/);
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 test("the unit and the room sensor open their own entities", async ({
@@ -329,4 +374,13 @@ test("idle, no order applies", async ({ page }) => {
 
   await expect(living.locator("h3")).toHaveText("Room units");
   await expect(living.locator(".rank")).toHaveText(["", ""]);
+});
+
+test("opening the dialog focuses Close, not a control", async ({ page }) => {
+  await openCards(page, FIXTURES["just-the-ac"]);
+  await card(page, "Living room").getByText("Room", { exact: true }).click();
+
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: "Close" }),
+  ).toBeFocused();
 });

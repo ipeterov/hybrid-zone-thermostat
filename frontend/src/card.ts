@@ -1,4 +1,4 @@
-import { css, html, LitElement, nothing } from "lit";
+import { css, html, LitElement, nothing, svg } from "lit";
 
 import { friendlyName, type Hass, type HassEntity } from "./hass";
 import {
@@ -18,6 +18,14 @@ interface ZoneCardConfig {
 }
 
 const STEP = 0.5;
+const HISTORY_HOURS = 24;
+
+interface HistoryPoint {
+  time: number;
+  room?: number;
+  target?: number;
+  state?: string;
+}
 const BAND_LOW = 16;
 const BAND_HIGH = 30;
 
@@ -42,10 +50,14 @@ export class HztZoneCard extends LitElement {
   static properties = {
     hass: { attribute: false },
     config: { state: true },
+    dialogOpen: { state: true },
+    history: { state: true },
   };
 
   hass?: Hass;
   config?: ZoneCardConfig;
+  dialogOpen = false;
+  history?: HistoryPoint[];
 
   static getStubConfig(hass: Hass): ZoneCardConfig {
     const zone = Object.values(hass.states).find((e) => isZone(e));
@@ -87,8 +99,8 @@ export class HztZoneCard extends LitElement {
   }
 
   // A click anywhere on the card that isn't on one of its controls opens
-  // the zone's more-info, as tile and thermostat cards do.
-  private onCardClick(event: MouseEvent, entityId: string) {
+  // the zone's dialog, as tile and thermostat cards open more-info.
+  private onCardClick(event: MouseEvent) {
     const interactive = event
       .composedPath()
       .some(
@@ -97,7 +109,80 @@ export class HztZoneCard extends LitElement {
           ["BUTTON", "SELECT", "A", "LABEL", "OPTION"].includes(node.tagName),
       );
     if (!interactive) {
-      this.moreInfo(entityId);
+      this.openDialog();
+    }
+  }
+
+  private openDialog() {
+    this.dialogOpen = true;
+    this.history = undefined;
+    this.loadHistory();
+  }
+
+  private closeDialog() {
+    this.dialogOpen = false;
+  }
+
+  protected updated(): void {
+    const dialog = this.renderRoot.querySelector("dialog");
+    if (dialog && this.dialogOpen && !dialog.open) {
+      dialog.showModal();
+    }
+  }
+
+  // The zone's last 24 hours from the recorder: room, target, state.
+  private async loadHistory() {
+    if (!(this.hass && this.config)) {
+      return;
+    }
+    const entityId = this.config.entity;
+    // The room line comes from the room sensor, whose history is usually
+    // longer than the zone's; target and state from the zone.
+    const sensor = readZone(
+      this.hass.states[entityId] as HassEntity,
+    ).roomSensor;
+    const start = new Date(Date.now() - HISTORY_HOURS * 3600_000);
+    try {
+      const result = await this.hass.callWS<
+        Record<
+          string,
+          { s?: string; a?: Record<string, unknown>; lu: number }[]
+        >
+      >({
+        type: "history/history_during_period",
+        start_time: start.toISOString(),
+        entity_ids: sensor ? [entityId, sensor] : [entityId],
+        minimal_response: false,
+        no_attributes: false,
+        significant_changes_only: false,
+      });
+      let last: Record<string, unknown> = {};
+      const zonePoints: HistoryPoint[] = (result[entityId] ?? []).map((row) => {
+        last = row.a ?? last;
+        return {
+          time: row.lu * 1000,
+          room:
+            !sensor && typeof last.current_temperature === "number"
+              ? last.current_temperature
+              : undefined,
+          target:
+            typeof last.temperature === "number" ? last.temperature : undefined,
+          state: typeof last.zone_state === "string" ? last.zone_state : "idle",
+        };
+      });
+      const roomPoints: HistoryPoint[] = sensor
+        ? (result[sensor] ?? []).flatMap((row) => {
+            const value = Number(row.s);
+            return Number.isFinite(value)
+              ? [{ time: row.lu * 1000, room: value }]
+              : [];
+          })
+        : [];
+      this.history = [...zonePoints, ...roomPoints].sort(
+        (a, b) => a.time - b.time,
+      );
+    } catch {
+      this.history = [];
     }
   }
 
@@ -126,21 +211,140 @@ export class HztZoneCard extends LitElement {
       </ha-card>`;
     }
     const zone = readZone(entity as HassEntity);
-    const word = zoneWord(zone);
     const glow = this.runningMode(zone);
-    return html`<ha-card
-      class=${glow ?? ""}
-      @click=${(e: MouseEvent) => this.onCardClick(e, zone.entityId)}
+    return html`<ha-card class=${glow ?? ""} @click=${this.onCardClick}>
+        ${this.renderGlow(glow)} ${this.renderBody(zone, false)}
+      </ha-card>
+      ${this.dialogOpen ? this.renderDialog(zone, glow) : nothing}`;
+  }
+
+  private renderGlow(glow: "heat" | "cool" | undefined) {
+    return html`<div class="glow-clip" aria-hidden="true">
+      <div class="aurora one ${glow ? "on" : ""}"></div>
+      <div class="aurora two ${glow ? "on" : ""}"></div>
+    </div>`;
+  }
+
+  // The zone in our own dialog: what HA's thermostat dialog shows, in
+  // HZT's terms, with the last day and a way on to HA's own dialog.
+  private renderDialog(zone: Zone, glow: "heat" | "cool" | undefined) {
+    return html`<dialog
+      class="zone-dialog ${glow ?? ""}"
+      aria-label=${zone.name}
+      @close=${this.closeDialog}
+      @click=${(e: MouseEvent) => {
+        // A click on the backdrop (the dialog itself, outside its box).
+        if (e.target === e.currentTarget) {
+          (e.currentTarget as HTMLDialogElement).close();
+        }
+      }}
     >
-      <div class="glow-clip" aria-hidden="true">
-        <div class="aurora one ${glow ? "on" : ""}"></div>
-        <div class="aurora two ${glow ? "on" : ""}"></div>
-      </div>
-      <div class="head">
-        <h2>
-          <button class="link" @click=${() => this.moreInfo(zone.entityId)}>
-            ${zone.name}
+      <div class="dialog-box">
+        ${this.renderGlow(glow)} ${this.renderBody(zone, true)}
+        <section class="history">
+          <h3 class="eyebrow">Last ${HISTORY_HOURS} hours</h3>
+          ${this.renderHistory()}
+        </section>
+        <div class="dialog-foot">
+          <button class="link more" @click=${() => this.moreInfo(zone.entityId)}>
+            History and settings in Home Assistant
           </button>
+        </div>
+      </div>
+    </dialog>`;
+  }
+
+  private renderHistory() {
+    const points = this.history;
+    if (points === undefined) {
+      return html`<p class="small">Loading…</p>`;
+    }
+    const usable = points.filter((p) => p.room !== undefined);
+    if (usable.length < 2) {
+      return html`<p class="small">Not enough history yet.</p>`;
+    }
+    const width = 520;
+    const height = 120;
+    const now = Date.now();
+    const from = now - HISTORY_HOURS * 3600_000;
+    const temps = points.flatMap((p) =>
+      [p.room, p.target].filter((v): v is number => v !== undefined),
+    );
+    const low = Math.floor(Math.min(...temps) - 0.5);
+    const high = Math.ceil(Math.max(...temps) + 0.5);
+    const x = (time: number) =>
+      ((Math.max(time, from) - from) / (now - from)) * width;
+    const y = (value: number) =>
+      height - ((value - low) / (high - low)) * height;
+    // The target steps; the room is measured, so it's a line.
+    const path = (key: "room" | "target", stepped: boolean) => {
+      let d = "";
+      let previous: number | undefined;
+      for (const p of points) {
+        const value = p[key];
+        if (value === undefined) {
+          continue;
+        }
+        if (previous === undefined) {
+          d = `M${x(p.time)} ${y(value)}`;
+        } else if (stepped) {
+          d += ` H${x(p.time)} V${y(value)}`;
+        } else {
+          d += ` L${x(p.time)} ${y(value)}`;
+        }
+        previous = value;
+      }
+      return previous === undefined ? "" : `${d} H${width}`;
+    };
+    const zonePoints = points.filter((p) => p.state !== undefined);
+    const bands = zonePoints.map((p, i) => {
+      const next = zonePoints[i + 1]?.time ?? now;
+      if (p.state !== "heating" && p.state !== "cooling") {
+        return nothing;
+      }
+      return svg`<rect
+        class=${p.state === "heating" ? "h-heat" : "h-cool"}
+        x=${x(p.time)}
+        y="0"
+        width=${Math.max(0, x(next) - x(p.time))}
+        height=${height}
+      ></rect>`;
+    });
+    return html`<svg
+        class="chart"
+        viewBox="0 0 ${width} ${height}"
+        preserveAspectRatio="none"
+        role="img"
+        aria-label="Room temperature and target over the last ${HISTORY_HOURS} hours"
+      >
+        ${bands}
+        <path class="h-target" d=${path("target", true)}></path>
+        <path class="h-room" d=${path("room", false)}></path>
+      </svg>
+      <div class="chart-scale">
+        <span>${HISTORY_HOURS} h ago</span>
+        <span>${low}–${high} °C</span>
+        <span>now</span>
+      </div>
+      <p class="legend">
+        <span><span class="swatch room"></span>room</span>
+        <span><span class="swatch target"></span>target</span>
+        <span><span class="swatch heat"></span>heating</span>
+        <span><span class="swatch cool"></span>cooling</span>
+      </p>`;
+  }
+
+  private renderBody(zone: Zone, inDialog: boolean) {
+    const word = zoneWord(zone);
+    return html`<div class="head">
+        <h2>
+          ${
+            inDialog
+              ? zone.name
+              : html`<button class="link" @click=${() => this.openDialog()}>
+                ${zone.name}
+              </button>`
+          }
         </h2>
         ${word ? html`<span class="chip ${zone.state ?? ""}">${word}</span>` : nothing}
         <button
@@ -172,6 +376,21 @@ export class HztZoneCard extends LitElement {
             />
           </svg>
         </a>
+        ${
+          inDialog
+            ? html`<button
+              class="icon close"
+              aria-label="Close"
+              autofocus
+              @click=${(e: MouseEvent) =>
+                (e.currentTarget as HTMLElement).closest("dialog")?.close()}
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>`
+            : nothing
+        }
       </div>
       ${this.renderNumbers(zone)} ${this.renderBand(zone)}
       ${
@@ -194,8 +413,7 @@ export class HztZoneCard extends LitElement {
           </p>`
           : nothing
       }
-      ${this.renderUnits(zone)}
-    </ha-card>`;
+      ${this.renderUnits(zone)}`;
   }
 
   private renderNumbers(zone: Zone) {
@@ -941,6 +1159,165 @@ export class HztZoneCard extends LitElement {
       padding: 0 8px;
       font: inherit;
       font-size: 13px;
+    }
+    /* The zone dialog */
+    .zone-dialog {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--hzt-text);
+      max-width: min(600px, calc(100vw - 32px));
+      width: 100%;
+      max-height: calc(100vh - 48px);
+      overflow: visible;
+    }
+    .zone-dialog::backdrop {
+      background: rgba(0, 0, 0, 0.6);
+    }
+    .dialog-box {
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+      overflow-y: auto;
+      max-height: calc(100vh - 48px);
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      padding: 20px;
+      border-radius: var(--ha-dialog-border-radius, 24px);
+      background: var(--ha-card-background, var(--hzt-card));
+      font-family: var(--ha-font-family-body, Roboto, system-ui, sans-serif);
+    }
+    .zone-dialog.heat {
+      --glow: var(--hzt-heat);
+      --glow-light: #ffbe5a;
+    }
+    .zone-dialog.cool {
+      --glow: var(--hzt-cool);
+      --glow-light: #50c8ff;
+    }
+    .dialog-box h2 {
+      font-size: 22px;
+    }
+    .dialog-box .big {
+      font-size: 64px;
+    }
+    .dialog-box .mid {
+      font-size: 40px;
+    }
+    .icon.close {
+      width: 40px;
+      height: 40px;
+      flex: none;
+      border: 0;
+      border-radius: 12px;
+      background: none;
+      color: var(--hzt-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .icon.close path {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+    }
+    .history {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .chart {
+      width: 100%;
+      height: 120px;
+      display: block;
+      border-radius: 8px;
+      background: var(--hzt-subtle);
+    }
+    .h-room {
+      fill: none;
+      stroke: var(--hzt-text);
+      stroke-width: 2;
+      vector-effect: non-scaling-stroke;
+    }
+    .h-target {
+      fill: none;
+      stroke: var(--hzt-muted);
+      stroke-width: 1.5;
+      stroke-dasharray: 4 4;
+      vector-effect: non-scaling-stroke;
+    }
+    .h-heat {
+      fill: color-mix(in srgb, var(--hzt-heat) 22%, transparent);
+    }
+    .h-cool {
+      fill: color-mix(in srgb, var(--hzt-cool) 22%, transparent);
+    }
+    .chart-scale {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--hzt-muted);
+    }
+    .legend {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--hzt-muted);
+    }
+    .legend > span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .swatch {
+      width: 14px;
+      height: 8px;
+      border-radius: 2px;
+    }
+    .swatch.room {
+      height: 2px;
+      background: var(--hzt-text);
+    }
+    .swatch.target {
+      height: 0;
+      border-top: 2px dashed var(--hzt-muted);
+    }
+    .swatch.heat {
+      background: color-mix(in srgb, var(--hzt-heat) 40%, transparent);
+    }
+    .swatch.cool {
+      background: color-mix(in srgb, var(--hzt-cool) 40%, transparent);
+    }
+    .dialog-foot {
+      display: flex;
+      justify-content: flex-end;
+      padding-top: 4px;
+      border-top: 1px solid var(--hzt-border);
+    }
+    .link.more {
+      min-height: 44px;
+      color: var(--primary-color, #0277bd);
+      font-size: 14px;
+    }
+    /* A phone: a sheet from the bottom, full width. */
+    @media (max-width: 600px) {
+      .zone-dialog {
+        max-width: 100vw;
+        margin: auto 0 0;
+        max-height: 92vh;
+      }
+      .dialog-box {
+        border-radius: 24px 24px 0 0;
+        max-height: 92vh;
+        padding: 16px;
+      }
+      .dialog-box .big {
+        font-size: 52px;
+      }
     }
     .missing p {
       font-size: 14px;
