@@ -43,6 +43,12 @@ PUSH_SPAN = 3.0
 # Setpoint-only changes go out at most this often; mode changes at once
 # (equipment protection already paces those).
 MIN_SETPOINT_INTERVAL = timedelta(seconds=60)
+# After a command, how long the device's reports count as it settling
+# rather than as someone changing it by hand. A device applies a command in
+# steps (the Hisense switched to cool and reported its stored 27 °C before
+# taking the new setpoint), and each step is reported in a context of its
+# own.
+SETTLE = timedelta(seconds=30)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,11 +108,15 @@ class ClimateDriver:
         self.entity_id = entity_id
         self.last: Command | None = None
         self._last_setpoint_sent: datetime | None = None
+        self._last_sent: datetime | None = None
         self._contexts: deque[str] = deque(maxlen=20)
 
-    def is_ours(self, state: State) -> bool:
-        """Whether this state is what HZT asked for (or HZT's own call)."""
+    def is_ours(self, state: State, now: datetime) -> bool:
+        """Whether this state is HZT's doing: its own call, the device
+        settling after one, or what HZT last asked for."""
         if state.context.id in self._contexts:
+            return True
+        if self._last_sent is not None and now - self._last_sent < SETTLE:
             return True
         if self.last is None:
             return False
@@ -144,6 +154,7 @@ class ClimateDriver:
 
         context = Context()
         self._contexts.append(context.id)
+        self._last_sent = now
         if command.temperature is None:
             await self.hass.services.async_call(
                 CLIMATE_DOMAIN,

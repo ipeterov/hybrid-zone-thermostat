@@ -1,4 +1,5 @@
 import copy
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.climate import (
@@ -11,10 +12,11 @@ from homeassistant.const import ATTR_ENTITY_ID, ATTR_TEMPERATURE
 from homeassistant.core import HomeAssistant, ServiceCall
 
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from houses import LIVING_ROOM
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
-    async_mock_service,
+    async_fire_time_changed,
 )
 
 CLIMATE = "climate.living_room"
@@ -42,8 +44,9 @@ def calls(hass: HomeAssistant) -> list[ServiceCall]:
 
     Request it after `entry`: setting up the climate integration registers
     the real services over these."""
-    recorded = async_mock_service(hass, CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE)
-    recorded += async_mock_service(hass, CLIMATE_DOMAIN, "set_hvac_mode")
+    recorded: list[ServiceCall] = []
+    for service in (SERVICE_SET_TEMPERATURE, "set_hvac_mode"):
+        hass.services.async_register(CLIMATE_DOMAIN, service, recorded.append)
     return recorded
 
 
@@ -78,10 +81,14 @@ async def test_a_shadow_zone_sends_nothing(
 
 @pytest.mark.parametrize("house_config", [live(LIVING_ROOM)])
 async def test_a_change_by_hand_hands_the_zone_over_for_a_while(
-    hass: HomeAssistant, entry: MockConfigEntry, calls: list[ServiceCall]
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    calls: list[ServiceCall],
+    freezer: FrozenDateTimeFactory,
 ):
     await give_ac_attributes(hass)
     calls.clear()
+    freezer.tick(timedelta(seconds=31))  # past the device's settling
 
     hass.states.async_set(AC, "cool", {**AC_ATTRIBUTES, "temperature": 20})
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -129,3 +136,41 @@ async def test_a_locked_out_unit_hands_over_to_the_next(
     assert attributes["demands"]["ac"]["mode"] is None
     assert attributes["demands"]["radiator"]["mode"] == "heat"
     assert "#1 Radiator" in attributes["reason"]
+
+
+@pytest.mark.parametrize("house_config", [live(LIVING_ROOM)])
+async def test_the_device_settling_after_a_command_is_not_a_manual_change(
+    hass: HomeAssistant, entry: MockConfigEntry, calls: list[ServiceCall]
+):
+    await give_ac_attributes(hass)
+
+    # As the Hisense did: it took the mode first and reported its stored
+    # setpoint for that mode before the new one.
+    hass.states.async_set(AC, "heat", {**AC_ATTRIBUTES, "temperature": 27})
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert hass.states.get(CLIMATE).attributes["zone_state"] == "heating"
+
+
+@pytest.mark.parametrize("house_config", [live(LIVING_ROOM)])
+async def test_a_missing_room_temperature_leaves_the_units_for_a_while(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    calls: list[ServiceCall],
+    freezer: FrozenDateTimeFactory,
+):
+    await give_ac_attributes(hass, "heat")
+    calls.clear()
+
+    hass.states.async_set("sensor.living_room_temperature", "unavailable")
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert calls == []
+    assert "left as they are" in hass.states.get(CLIMATE).attributes["reason"]
+
+    freezer.tick(timedelta(minutes=11))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    sent_to_ac = [call for call in calls if call.data[ATTR_ENTITY_ID] == AC]
+    assert [call.data["hvac_mode"] for call in sent_to_ac] == ["off"]

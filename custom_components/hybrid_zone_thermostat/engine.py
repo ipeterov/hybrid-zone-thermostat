@@ -26,6 +26,7 @@ from typing import Any
 
 from homeassistant.const import (
     ATTR_TEMPERATURE,
+    EVENT_HOMEASSISTANT_STARTED,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
@@ -66,6 +67,10 @@ _LOGGER = logging.getLogger(__name__)
 SIGNAL_UPDATE = f"{DOMAIN}_update"
 UPDATE_INTERVAL = timedelta(seconds=30)
 MANUAL_HOLD = timedelta(hours=2)
+# A missing room temperature (a sensor not loaded yet after a restart, a
+# dropped Zigbee message) leaves the zone's units as they are for this long
+# before they're turned off.
+SENSOR_GRACE = timedelta(minutes=10)
 STATE_STORAGE_KEY = f"{DOMAIN}.controller"
 STATE_STORAGE_VERSION = 1
 # How long runtime state may sit unsaved: a restart loses at most this
@@ -104,6 +109,7 @@ class Engine:
         self.decision: HouseDecision | None = None
         self.unit_status: dict[str, UnitStatus] = {}
         self.manual: dict[str, ManualOverride] = {}
+        self._sensor_missing_since: dict[str, datetime] = {}
         self._drivers: dict[str, ClimateDriver] = {}
         self._state_store: Store[dict[str, Any]] = Store(
             hass, STATE_STORAGE_VERSION, STATE_STORAGE_KEY
@@ -130,6 +136,16 @@ class Engine:
         self._unsubscribe.append(
             async_track_time_interval(self.hass, self._on_tick, UPDATE_INTERVAL)
         )
+        if not self.hass.is_running:
+            self._unsubscribe.append(
+                self.hass.bus.async_listen_once(
+                    EVENT_HOMEASSISTANT_STARTED, self._on_started
+                )
+            )
+        self.async_update()
+
+    @callback
+    def _on_started(self, event: Event) -> None:
         self.async_update()
 
     async def async_stop(self) -> None:
@@ -190,9 +206,23 @@ class Engine:
     def _finish_zone(
         self, zone_id: str, decision: ZoneDecision, now: datetime
     ) -> ZoneDecision:
-        """Apply manual overrides and equipment protection."""
+        """Apply manual overrides, the sensor grace and equipment
+        protection."""
         if (override := self.manual.get(zone_id)) is not None:
             return ZoneDecision(ZoneState.MANUAL, {}, override.reason)
+        if decision.state is ZoneState.FAULT:
+            since = self._sensor_missing_since.setdefault(zone_id, now)
+            if now - since < SENSOR_GRACE:
+                minutes = int(SENSOR_GRACE.total_seconds() // 60)
+                return ZoneDecision(
+                    ZoneState.FAULT,
+                    {},
+                    "No room temperature, so the units are left as they "
+                    f"are; they're turned off if it's still missing after "
+                    f"{minutes} min.",
+                )
+        else:
+            self._sensor_missing_since.pop(zone_id, None)
         units = {unit["id"]: unit for unit in self._units_of(zone_id)}
         demands = dict(decision.demands)
         notes: list[str] = []
@@ -333,6 +363,10 @@ class Engine:
         decision, snapshot = self.decision, self.snapshot
         if decision is None or snapshot is None:
             return
+        # While HA starts, entities appear one by one: a decision made now
+        # may rest on a sensor that hasn't loaded yet.
+        if not self.hass.is_running:
+            return
         for zone in self.store.config["zones"]:
             if zone["shadow"] or zone["id"] in self.manual:
                 continue
@@ -373,9 +407,9 @@ class Engine:
             driver = self._drivers.get(unit["id"])
             if zone["shadow"] or driver is None or driver.last is None:
                 continue
-            if driver.is_ours(new):
-                continue
             now = dt_util.utcnow()
+            if driver.is_ours(new, now):
+                continue
             until = now + MANUAL_HOLD
             what = new.state
             temperature = new.attributes.get(ATTR_TEMPERATURE)
