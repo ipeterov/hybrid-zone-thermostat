@@ -60,6 +60,7 @@ export function addZone(
     target: 21,
     idle_band: 1.5,
     enabled: true,
+    shadow: true,
     heating_order: [],
     cooling_order: [],
   };
@@ -87,9 +88,14 @@ export function updateZone(
   };
 }
 
+export type NewRoomUnit = Pick<
+  RoomUnit,
+  "name" | "entity_id" | "zone_id" | "can_heat" | "can_cool"
+>;
+
 export function addRoomUnit(
   config: HouseConfig,
-  unit: Omit<RoomUnit, "id">,
+  unit: NewRoomUnit,
 ): HouseConfig {
   const id = slug(
     unit.name,
@@ -97,7 +103,17 @@ export function addRoomUnit(
   );
   return withOrders({
     ...config,
-    room_units: [...config.room_units, { ...unit, id }],
+    room_units: [
+      ...config.room_units,
+      {
+        heat_lockout_below: null,
+        cool_lockout_below: null,
+        min_run: 6,
+        min_rest: 4,
+        ...unit,
+        id,
+      },
+    ],
   });
 }
 
@@ -134,4 +150,17 @@ export function moveRoomUnit(
   units[a] = other;
   units[b] = unit;
   return withOrders({ ...config, room_units: units });
+}
+
+export function updateRoomUnit(
+  config: HouseConfig,
+  unitId: string,
+  changes: Partial<Omit<RoomUnit, "id" | "zone_id">>,
+): HouseConfig {
+  return withOrders({
+    ...config,
+    room_units: config.room_units.map((unit) =>
+      unit.id === unitId ? { ...unit, ...changes } : unit,
+    ),
+  });
 }

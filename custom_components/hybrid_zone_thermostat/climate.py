@@ -19,7 +19,6 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import HztConfigEntry
 from .control import ZoneState
-from .engine import SHADOW
 from .entity import ZoneEntity
 
 # HA 2026.11 renamed climate temperatures to native_* and warns about the
@@ -81,7 +80,7 @@ class ZoneClimate(ZoneEntity, ClimateEntity):
         if decision.state is ZoneState.OFF:
             return HVACAction.OFF
         # In shadow mode nothing runs, so claiming "heating" would be a lie.
-        if SHADOW:
+        if self.engine.store.zone(self.zone_id)["shadow"]:
             return None
         return _ACTIONS.get(decision.state)
 
@@ -102,11 +101,23 @@ class ZoneClimate(ZoneEntity, ClimateEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         decision = self.zone_decision
+        units = self.engine.store.config["room_units"]
         return {
             "hzt_zone_id": self.zone_id,
             "zone_state": decision.state.value if decision else None,
             "reason": decision.reason if decision else None,
-            "shadow": SHADOW,
+            "shadow": self.engine.store.zone(self.zone_id)["shadow"],
+            "units": {
+                unit["id"]: {
+                    "available": status.available,
+                    "heat_locked": status.heat_locked,
+                    "cool_locked": status.cool_locked,
+                    "note": status.note,
+                }
+                for unit in units
+                if unit["zone_id"] == self.zone_id
+                and (status := self.engine.unit_status.get(unit["id"]))
+            },
             "demands": {
                 unit_id: {
                     "mode": demand.mode.value if demand.mode else None,

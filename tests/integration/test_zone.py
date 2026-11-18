@@ -116,7 +116,8 @@ async def test_controller_state_survives_a_reload(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
     saved = hass_storage[f"{DOMAIN}.controller"]["data"]
-    assert "living_room" in saved
+    assert "living_room" in saved["controller"]
+    assert "ac" in saved["protection"]
 
 
 async def test_the_panel_reads_the_config(

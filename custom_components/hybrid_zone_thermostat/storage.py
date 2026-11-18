@@ -27,6 +27,8 @@ class ZoneConfig(TypedDict):
     # Heating holds `target`; cooling starts this far above it.
     idle_band: float
     enabled: bool
+    # Decide but send nothing to the units. On until the owner says.
+    shadow: bool
     # Room unit ids, first choice first.
     heating_order: list[str]
     cooling_order: list[str]
@@ -39,6 +41,13 @@ class RoomUnitConfig(TypedDict):
     zone_id: str
     can_heat: bool
     can_cool: bool
+    # Outdoor lockouts, °C: below these the unit may not heat / cool.
+    # None: no lockout.
+    heat_lockout_below: float | None
+    cool_lockout_below: float | None
+    # Equipment protection, minutes.
+    min_run: float
+    min_rest: float
 
 
 class HouseConfig(TypedDict):
@@ -59,6 +68,11 @@ def empty_config() -> HouseConfig:
 
 _ENTITY_ID = probatio.Match(r"^[a-z_]+\.[a-z0-9_]+$")
 _OPTIONAL_ENTITY_ID = probatio.Any(None, _ENTITY_ID)
+_OPTIONAL_TEMPERATURE = probatio.Any(
+    None,
+    probatio.All(probatio.Coerce(float), probatio.Range(min=-40, max=50)),
+)
+_MINUTES = probatio.All(probatio.Coerce(float), probatio.Range(min=0, max=60))
 
 _SCHEMA = probatio.Schema(
     {
@@ -83,6 +97,7 @@ _SCHEMA = probatio.Schema(
                     probatio.Coerce(float), probatio.Range(min=0.5, max=5)
                 ),
                 probatio.Optional("enabled", default=True): bool,
+                probatio.Optional("shadow", default=True): bool,
                 probatio.Optional("heating_order", default=list): [str],
                 probatio.Optional("cooling_order", default=list): [str],
             }
@@ -97,6 +112,14 @@ _SCHEMA = probatio.Schema(
                 probatio.Required("zone_id"): str,
                 probatio.Optional("can_heat", default=True): bool,
                 probatio.Optional("can_cool", default=False): bool,
+                probatio.Optional("heat_lockout_below", default=None): (
+                    _OPTIONAL_TEMPERATURE
+                ),
+                probatio.Optional("cool_lockout_below", default=None): (
+                    _OPTIONAL_TEMPERATURE
+                ),
+                probatio.Optional("min_run", default=6.0): _MINUTES,
+                probatio.Optional("min_rest", default=4.0): _MINUTES,
             }
         ],
         probatio.Optional("central_units", default=list): [dict],
@@ -159,7 +182,9 @@ class ConfigStore:
         self.config: HouseConfig = empty_config()
 
     async def async_load(self) -> None:
-        self.config = await self._store.async_load() or empty_config()
+        """Load, filling in fields added since the config was saved."""
+        stored = await self._store.async_load()
+        self.config = validate_config(stored) if stored else empty_config()
 
     async def async_save(self, config: HouseConfig) -> None:
         self.config = config

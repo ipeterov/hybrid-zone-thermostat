@@ -460,7 +460,201 @@ export const panelStyles = css`
     justify-content: flex-start;
   }
 
+  /* Nodes are buttons */
+  .node.unit {
+    cursor: pointer;
+    color: var(--hzt-text);
+    font: inherit;
+  }
+  .node.unit:hover {
+    border-color: var(--hzt-muted);
+  }
+  .node.unit.selected {
+    outline: 2px solid var(--hzt-text);
+    outline-offset: 2px;
+  }
+
+  /* Shadow / live */
+  .mode {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    border: 1px dashed var(--hzt-border);
+    border-radius: 12px;
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--hzt-muted);
+  }
+  .mode strong {
+    color: var(--hzt-text);
+    font-weight: 500;
+  }
+  .mode.live {
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--hzt-accent) 50%, transparent);
+  }
+  .mode.confirm {
+    border-style: solid;
+    border-color: var(--hzt-heat);
+  }
+  .side-actions.start {
+    justify-content: flex-start;
+  }
+
+  /* One-unit direction, and unit links in an order */
+  .row.single {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    border: 1px solid var(--hzt-border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    background: none;
+    text-align: left;
+  }
+  .row.single .rank {
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+  }
+  .order-text.link {
+    border: 0;
+    background: none;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+  }
+  .row.single:hover,
+  .order-text.link:hover .order-name {
+    text-decoration: underline;
+  }
+
+  /* Unit editor */
+  .back {
+    align-self: flex-start;
+    margin-left: -8px;
+    color: var(--hzt-accent);
+  }
+  .mono {
+    font-family: var(--ha-font-family-code, ui-monospace, monospace);
+    font-size: 12px;
+  }
+  .checks {
+    display: flex;
+    gap: 20px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    font-size: 15px;
+  }
+  .check input {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+  }
+  .field small {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--hzt-muted);
+  }
+  select:disabled {
+    opacity: 0.5;
+  }
+
+  /* Lockout chart */
+  .chart {
+    display: grid;
+    grid-template-columns: minmax(80px, 160px) minmax(0, 1fr);
+    gap: 10px 14px;
+    align-items: center;
+    font-size: 13px;
+  }
+  .chart-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chart-track {
+    position: relative;
+    height: 24px;
+    border-radius: 4px;
+    background: var(--hzt-subtle);
+  }
+  .bar {
+    position: absolute;
+    height: 8px;
+    border-radius: 4px;
+  }
+  .bar.heat {
+    top: 3px;
+    background: var(--hzt-heat);
+  }
+  .bar.cool {
+    bottom: 3px;
+    background: var(--hzt-cool);
+  }
+  .now {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--hzt-text);
+  }
+  .chart-axis {
+    position: relative;
+    height: 16px;
+    font-size: 11px;
+    color: var(--hzt-muted);
+  }
+  .chart-axis span {
+    position: absolute;
+    top: 0;
+  }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--hzt-muted);
+  }
+  .legend > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .swatch {
+    width: 14px;
+    height: 8px;
+    border-radius: 4px;
+  }
+  .swatch.heat {
+    background: var(--hzt-heat);
+  }
+  .swatch.cool {
+    background: var(--hzt-cool);
+  }
+  .swatch.now {
+    width: 2px;
+    height: 12px;
+    border-radius: 0;
+    background: var(--hzt-text);
+  }
+
   @media (max-width: 600px) {
+    .chart {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 4px;
+    }
+    .chart-label:not(:first-child) {
+      margin-top: 6px;
+    }
     .topbar {
       padding: 0 16px;
     }

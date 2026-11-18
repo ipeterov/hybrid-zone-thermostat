@@ -28,6 +28,8 @@ export interface Zone {
   target: number;
   idle_band: number;
   enabled: boolean;
+  // Decides but sends nothing to the units.
+  shadow: boolean;
   heating_order: string[];
   cooling_order: string[];
 }
@@ -39,6 +41,12 @@ export interface RoomUnit {
   zone_id: string;
   can_heat: boolean;
   can_cool: boolean;
+  // Below these outdoor temperatures (°C) it may not heat / cool.
+  heat_lockout_below: number | null;
+  cool_lockout_below: number | null;
+  // Minutes.
+  min_run: number;
+  min_rest: number;
 }
 
 export const DOMAIN = "hybrid_zone_thermostat";

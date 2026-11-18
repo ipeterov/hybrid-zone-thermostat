@@ -6,7 +6,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import HztConfigEntry
 from .control import ZoneState
-from .engine import SHADOW, Engine
+from .engine import Engine
 from .entity import ZoneEntity
 
 
@@ -58,7 +58,8 @@ class ZoneReasonSensor(ZoneEntity, SensorEntity):
         if decision is None:
             return None
         reason = decision.reason
-        if SHADOW and decision.demands:
+        shadow = self.engine.store.zone(self.zone_id)["shadow"]
+        if shadow and decision.demands:
             reason = f"Shadow mode, nothing sent. {reason}"
         # A state is at most 255 characters.
         return reason[:255]
