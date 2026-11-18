@@ -5,11 +5,17 @@ export interface HassEntity {
   entity_id: string;
   state: string;
   attributes: Record<string, unknown>;
+  last_updated?: string;
 }
 
 export interface Hass {
   states: Record<string, HassEntity>;
   callWS<T>(message: { type: string; [key: string]: unknown }): Promise<T>;
+  callService(
+    domain: string,
+    service: string,
+    data?: Record<string, unknown>,
+  ): Promise<unknown>;
 }
 
 // The stored config (custom_components/.../storage.py), as the backend

@@ -243,10 +243,11 @@ export class HztPanel extends LitElement {
         typeof a.demands === "object" && a.demands
           ? (a.demands as Record<string, Demand>)
           : {},
-      units:
-        typeof a.units === "object" && a.units
-          ? (a.units as Record<string, UnitStatus>)
-          : {},
+      units: Array.isArray(a.units)
+        ? Object.fromEntries(
+            (a.units as (UnitStatus & { id: string })[]).map((u) => [u.id, u]),
+          )
+        : {},
     };
   }
 

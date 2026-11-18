@@ -100,24 +100,43 @@ class ZoneClimate(ZoneEntity, ClimateEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        """Everything the zone card shows, so it needs no admin-only API."""
         decision = self.zone_decision
-        units = self.engine.store.config["room_units"]
+        zone = self.engine.store.zone(self.zone_id)
+        heating = zone["heating_order"]
+        cooling = zone["cooling_order"]
+        units = []
+        for unit in self.engine.store.config["room_units"]:
+            if unit["zone_id"] != self.zone_id:
+                continue
+            status = self.engine.unit_status.get(unit["id"])
+            units.append(
+                {
+                    "id": unit["id"],
+                    "name": unit["name"],
+                    "entity_id": unit["entity_id"],
+                    "heat_rank": heating.index(unit["id"]) + 1
+                    if unit["id"] in heating
+                    else None,
+                    "cool_rank": cooling.index(unit["id"]) + 1
+                    if unit["id"] in cooling
+                    else None,
+                    "available": status.available if status else True,
+                    "heat_locked": status.heat_locked if status else False,
+                    "cool_locked": status.cool_locked if status else False,
+                    "heat_lockout_below": unit["heat_lockout_below"],
+                    "cool_lockout_below": unit["cool_lockout_below"],
+                    "note": status.note if status else None,
+                }
+            )
         return {
             "hzt_zone_id": self.zone_id,
             "zone_state": decision.state.value if decision else None,
             "reason": decision.reason if decision else None,
-            "shadow": self.engine.store.zone(self.zone_id)["shadow"],
-            "units": {
-                unit["id"]: {
-                    "available": status.available,
-                    "heat_locked": status.heat_locked,
-                    "cool_locked": status.cool_locked,
-                    "note": status.note,
-                }
-                for unit in units
-                if unit["zone_id"] == self.zone_id
-                and (status := self.engine.unit_status.get(unit["id"]))
-            },
+            "shadow": zone["shadow"],
+            "idle_band": zone["idle_band"],
+            "room_sensor": zone["room_sensor"],
+            "units": units,
             "demands": {
                 unit_id: {
                     "mode": demand.mode.value if demand.mode else None,

@@ -1,6 +1,7 @@
 import "../src/panel";
+import "../src/card";
 
-import type { Hass, HouseConfig } from "../src/hass";
+import type { Hass, HassEntity, HouseConfig } from "../src/hass";
 import { FIXTURES, type Fixture } from "./fixtures";
 
 // A test sets `window.hztFixture` (via page.addInitScript) to choose what
@@ -46,35 +47,93 @@ let config: HouseConfig = fixture.config ?? {
   central_units: [],
 };
 
-const hass: Hass = {
-  states: Object.fromEntries(
-    (fixture.states ?? []).map((entity) => [entity.entity_id, entity]),
-  ),
-  callWS<T>(message: { type: string; [key: string]: unknown }): Promise<T> {
-    window.hztCalls.push(message);
-    if (fixture.error) {
-      return Promise.reject(new Error(fixture.error));
-    }
-    if (message.type === "hybrid_zone_thermostat/config") {
-      return Promise.resolve(config as T);
-    }
-    if (message.type === "hybrid_zone_thermostat/config/save") {
-      config = message.config as HouseConfig;
-      return Promise.resolve(config as T);
-    }
-    return Promise.reject(new Error(`Unknown command ${message.type}`));
-  },
-};
+let states: Record<string, HassEntity> = Object.fromEntries(
+  (fixture.states ?? []).map((entity) => [entity.entity_id, entity]),
+);
 
-const panel = document.createElement("hzt-panel") as HTMLElement & {
-  hass?: Hass;
-  narrow?: boolean;
-};
-panel.hass = hass;
-// HA hides its sidebar, and calls the panel narrow, below 870 px.
-const narrowQuery = window.matchMedia("(max-width: 870px)");
-panel.narrow = narrowQuery.matches;
-narrowQuery.addEventListener("change", (event) => {
-  panel.narrow = event.matches;
-});
-document.body.append(panel);
+// Elements showing `hass`; each gets a new object when states change, as
+// HA does, so Lit re-renders.
+const views: (HTMLElement & { hass?: Hass })[] = [];
+
+function setAttribute(entityId: string, changes: Record<string, unknown>) {
+  const entity = states[entityId];
+  if (!entity) {
+    return;
+  }
+  states = {
+    ...states,
+    [entityId]: { ...entity, attributes: { ...entity.attributes, ...changes } },
+  };
+  const next = makeHass();
+  for (const view of views) {
+    view.hass = next;
+  }
+}
+
+function makeHass(): Hass {
+  return {
+    states,
+    callWS<T>(message: { type: string; [key: string]: unknown }): Promise<T> {
+      window.hztCalls.push(message);
+      if (fixture.error) {
+        return Promise.reject(new Error(fixture.error));
+      }
+      if (message.type === "hybrid_zone_thermostat/config") {
+        return Promise.resolve(config as T);
+      }
+      if (message.type === "hybrid_zone_thermostat/config/save") {
+        config = message.config as HouseConfig;
+        return Promise.resolve(config as T);
+      }
+      return Promise.reject(new Error(`Unknown command ${message.type}`));
+    },
+    callService(domain, service, data = {}) {
+      window.hztCalls.push({ type: "call_service", domain, service, data });
+      const entityId = String(data.entity_id ?? "");
+      if (service === "set_temperature") {
+        setAttribute(entityId, { temperature: data.temperature });
+      } else if (service === "set_fan_mode") {
+        setAttribute(entityId, { fan_mode: data.fan_mode });
+      } else if (service === "set_swing_mode") {
+        setAttribute(entityId, { swing_mode: data.swing_mode });
+      }
+      return Promise.resolve();
+    },
+  };
+}
+
+const hass = makeHass();
+
+if (params.get("view") === "card") {
+  // Every zone's card, laid out like a dashboard section.
+  const grid = document.createElement("div");
+  grid.className = "dashboard";
+  for (const entity of Object.values(states)) {
+    if (typeof entity.attributes.hzt_zone_id !== "string") {
+      continue;
+    }
+    const card = document.createElement("hzt-zone-card") as HTMLElement & {
+      hass?: Hass;
+      setConfig(config: { type: string; entity: string }): void;
+    };
+    card.setConfig({ type: "custom:hzt-zone-card", entity: entity.entity_id });
+    card.hass = hass;
+    views.push(card);
+    grid.append(card);
+  }
+  document.body.append(grid);
+} else {
+  const panel = document.createElement("hzt-panel") as HTMLElement & {
+    hass?: Hass;
+    narrow?: boolean;
+  };
+  panel.hass = hass;
+  views.push(panel);
+  // HA hides its sidebar, and calls the panel narrow, below 870 px.
+  const narrowQuery = window.matchMedia("(max-width: 870px)");
+  panel.narrow = narrowQuery.matches;
+  narrowQuery.addEventListener("change", (event) => {
+    panel.narrow = event.matches;
+  });
+  document.body.append(panel);
+}

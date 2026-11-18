@@ -132,7 +132,8 @@ async def test_a_locked_out_unit_hands_over_to_the_next(
     hass: HomeAssistant, entry: MockConfigEntry, calls: list[ServiceCall]
 ):
     attributes = hass.states.get(CLIMATE).attributes
-    assert attributes["units"]["ac"]["heat_locked"] is True
+    ac = next(u for u in attributes["units"] if u["id"] == "ac")
+    assert ac["heat_locked"] is True
     assert attributes["demands"]["ac"]["mode"] is None
     assert attributes["demands"]["radiator"]["mode"] == "heat"
     assert "#1 Radiator" in attributes["reason"]

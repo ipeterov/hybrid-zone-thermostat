@@ -7,6 +7,17 @@
     <style>
       body {
         margin: 0;
+        font-family: Roboto, system-ui, sans-serif;
+      }
+      /* ?view=card: cards the way a sections dashboard lays them out. */
+      .dashboard {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 24px 16px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 480px), 1fr));
+        gap: 16px;
+        align-items: start;
       }
     </style>
   </head>

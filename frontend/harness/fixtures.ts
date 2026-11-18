@@ -13,6 +13,7 @@ function temperature(id: string, name: string, value: string): HassEntity {
   return {
     entity_id: id,
     state: value,
+    last_updated: new Date(Date.now() - 40_000).toISOString(),
     attributes: {
       friendly_name: name,
       device_class: "temperature",
@@ -67,30 +68,40 @@ interface StatusFields {
   units?: Record<string, Record<string, unknown>>;
 }
 
+// A zone's climate entity as HZT would publish it for `config`.
 function zoneStatus(
-  id: string,
+  config: HouseConfig,
   zoneId: string,
   fields: StatusFields,
 ): HassEntity {
-  const units = Object.fromEntries(
-    Object.keys(fields.demands).map((unitId) => [
-      unitId,
-      {
-        available: true,
-        heat_locked: false,
-        cool_locked: false,
-        note: null,
-        ...fields.units?.[unitId],
-      },
-    ]),
-  );
+  const zoneConfig = config.zones.find((z) => z.id === zoneId) as Zone;
+  const units = config.room_units
+    .filter((u) => u.zone_id === zoneId)
+    .map((u) => ({
+      id: u.id,
+      name: u.name,
+      entity_id: u.entity_id,
+      heat_rank: zoneConfig.heating_order.indexOf(u.id) + 1 || null,
+      cool_rank: zoneConfig.cooling_order.indexOf(u.id) + 1 || null,
+      available: true,
+      heat_locked: false,
+      cool_locked: false,
+      heat_lockout_below: u.heat_lockout_below,
+      cool_lockout_below: u.cool_lockout_below,
+      note: null,
+      ...fields.units?.[u.id],
+    }));
+  const { units: _ignored, ...rest } = fields;
   return {
-    entity_id: id,
-    state: "heat_cool",
+    entity_id: `climate.${zoneId}`,
+    state: zoneConfig.enabled ? "heat_cool" : "off",
     attributes: {
+      friendly_name: zoneConfig.name,
       hzt_zone_id: zoneId,
-      shadow: true,
-      ...fields,
+      shadow: zoneConfig.shadow,
+      idle_band: zoneConfig.idle_band,
+      room_sensor: zoneConfig.room_sensor,
+      ...rest,
       units,
     },
   };
@@ -113,12 +124,24 @@ export const DEVICES: HassEntity[] = [
       device_class: "carbon_dioxide",
     },
   },
-  climate("climate.living_room_hisense_ac", "Hisense AC", [
-    "cool",
-    "heat",
-    "fan_only",
-    "dry",
-  ]),
+  {
+    ...climate("climate.living_room_hisense_ac", "Hisense AC", [
+      "cool",
+      "heat",
+      "fan_only",
+      "dry",
+    ]),
+    attributes: {
+      friendly_name: "Hisense AC",
+      hvac_modes: ["off", "cool", "heat", "fan_only", "dry"],
+      fan_modes: ["auto", "low", "medium", "high", "quiet"],
+      swing_modes: ["off", "both", "vertical", "horizontal"],
+      fan_mode: "auto",
+      swing_mode: "vertical",
+      temperature: 23,
+      current_temperature: 24,
+    },
+  },
   climate("climate.living_room_trv", "Living room radiator", ["heat"]),
   climate("climate.bedroom_trv", "Bedroom radiator", ["heat"]),
   climate("climate.entryway_trv", "Entryway radiator", ["heat"]),
@@ -156,7 +179,7 @@ export const LIVING_ROOM: HouseConfig = {
   central_units: [],
 };
 
-const LIVING_ROOM_STATUS = zoneStatus("climate.living_room", "living_room", {
+const LIVING_ROOM_STATUS = zoneStatus(LIVING_ROOM, "living_room", {
   zone_state: "heating",
   current_temperature: 21.4,
   temperature: 22,
@@ -175,7 +198,7 @@ export const JUST_THE_AC: HouseConfig = {
   central_units: [],
 };
 
-const JUST_THE_AC_STATUS = zoneStatus("climate.living_room", "living_room", {
+const JUST_THE_AC_STATUS = zoneStatus(JUST_THE_AC, "living_room", {
   zone_state: "cooling",
   current_temperature: 27.6,
   temperature: 23,
@@ -225,14 +248,14 @@ export const HOUSE: HouseConfig = {
 const HOUSE_STATES = [
   ...DEVICES,
   LIVING_ROOM_STATUS,
-  zoneStatus("climate.bedroom", "bedroom", {
+  zoneStatus(HOUSE, "bedroom", {
     zone_state: "idle",
     current_temperature: 19.8,
     temperature: 20,
     reason: "19.8 °C is between 20.0 and 21.5: nothing needs to run.",
     demands: { bedroom_radiator: { mode: null, level: 0 } },
   }),
-  zoneStatus("climate.entryway", "entryway", {
+  zoneStatus(HOUSE, "entryway", {
     zone_state: "off",
     current_temperature: 16.1,
     temperature: 18,
@@ -272,7 +295,7 @@ export const FIXTURES: Record<string, Fixture> = {
           ? { ...e, state: "-18" }
           : e,
       ),
-      zoneStatus("climate.living_room", "living_room", {
+      zoneStatus(LIVING_ROOM, "living_room", {
         zone_state: "heating",
         current_temperature: 20.9,
         temperature: 22,
