@@ -284,7 +284,53 @@ test("the menu sits above the band, item by item", async ({ page }) => {
   }
 });
 
-test("a drag by a label ends when it's let go", async ({ page }) => {
+test("clicking a label leaves nothing lit once the pointer leaves @webkit", async ({
+  page,
+}) => {
+  await openCards(page, FIXTURES["living-room"]);
+  const living = card(page, "Living room");
+
+  for (const which of ["low", "high"]) {
+    await living.locator(`.edge.${which}`).click();
+    await page.mouse.move(5, 5);
+
+    await expect(living.locator(`.edge.${which}`)).not.toHaveClass(/\blit\b/);
+    await expect(living.locator(`.tick.${which}`)).not.toHaveClass(/\blit\b/);
+    // Not focused either: focus would light it too.
+    expect(
+      await page.evaluate(
+        () =>
+          (
+            document.querySelector("hzt-zone-card")?.shadowRoot
+              ?.activeElement as HTMLElement | null
+          )?.className ?? "",
+      ),
+    ).not.toContain("edge");
+    // And it looks it: the edge's line is back to its resting width.
+    await expect
+      .poll(() =>
+        living
+          .locator(`.tick.${which} .tick-line`)
+          .evaluate((e) => getComputedStyle(e).width),
+      )
+      .toBe("2px");
+  }
+});
+
+test("hovering a label lights its edge, and the other way round", async ({
+  page,
+}) => {
+  await openCards(page, FIXTURES["living-room"]);
+  const living = card(page, "Living room");
+
+  await living.locator(".edge.low").hover();
+  await expect(living.locator(".tick.low")).toHaveClass(/\blit\b/);
+  await living.locator(".tick.high").hover();
+  await expect(living.locator(".edge.high")).toHaveClass(/\blit\b/);
+  await expect(living.locator(".tick.low")).not.toHaveClass(/\blit\b/);
+});
+
+test("a drag by a label ends when it's let go @webkit", async ({ page }) => {
   await openCards(page, FIXTURES["living-room"]);
   const living = card(page, "Living room");
   const label = await living

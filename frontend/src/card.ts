@@ -132,6 +132,13 @@ function monotonePath(points: readonly (readonly [number, number])[]): string {
   return d;
 }
 
+// A click on a handle shouldn't focus it: WebKit focuses on mousedown even
+// when the pointerdown was cancelled, and the focus ring would stay until a
+// click elsewhere. Keyboard users still reach the handles by Tab.
+function noFocus(event: MouseEvent) {
+  event.preventDefault();
+}
+
 function partOf(handle: Handle): "target" | "band" {
   return handle === "target" ? "target" : "band";
 }
@@ -174,7 +181,11 @@ export class HztZoneCard extends LitElement {
     pending: { state: true },
     menuOpen: { state: true },
     chartWidth: { state: true },
+    hot: { state: true },
   };
+
+  // The band handle under the pointer, if any (see renderBand's lit()).
+  hot?: Handle;
 
   menuOpen = false;
 
@@ -513,10 +524,23 @@ export class HztZoneCard extends LitElement {
     }
   }
 
+  private setHot(which: Handle) {
+    this.hot = which;
+  }
+
+  private clearHot(which: Handle) {
+    if (this.hot === which) {
+      this.hot = undefined;
+    }
+  }
+
   private endDrag(event: PointerEvent) {
     const drag = this.drag;
     const zone = this.zone;
     this.drag = undefined;
+    // The pointer may have left mid-drag without a pointerleave reaching
+    // the handle; it lights again on the next pointerenter.
+    this.hot = undefined;
     // Anything but a cancel keeps where the handle was let go.
     if (drag && zone && event.type !== "pointercancel") {
       this.commit(zone, rounded(drag, partOf(drag.handle)));
@@ -802,6 +826,11 @@ export class HztZoneCard extends LitElement {
     const at = (t: number) =>
       `${((clamp(t, low, high) - low) / (high - low)) * 100}%`;
     const active = this.drag?.handle;
+    // A handle lights while the pointer is over it or its pair (an edge and
+    // its label), or while it's dragged. Kept by the card, not CSS :hover
+    // or :focus, which WebKit leaves set after a click or a drag.
+    const lit = (which: Handle) =>
+      this.hot === which || active === which ? "lit" : "";
     const edges = [
       {
         which: "low" as const,
@@ -838,9 +867,12 @@ export class HztZoneCard extends LitElement {
         ${edges.map(
           // The edge itself can be grabbed too; it lights up with its label.
           (edge) => html`<span
-            class="tick ${edge.which} ${active === edge.which ? "active" : ""}"
+            class="tick ${edge.which} ${lit(edge.which)}"
             style="left:${at(edge.value)}"
             aria-hidden="true"
+            @pointerenter=${() => this.setHot(edge.which)}
+            @pointerleave=${() => this.clearHot(edge.which)}
+            @mousedown=${noFocus}
             @pointerdown=${(e: PointerEvent) => this.startDrag(e, edge.which)}
             ><span class="tick-line"></span
           ></span>`,
@@ -856,7 +888,7 @@ export class HztZoneCard extends LitElement {
               </span>`
         }
         <span
-          class="hand ${active === "target" ? "active" : ""}"
+          class="hand ${lit("target")}"
           style="left:${at(target)}"
           role="slider"
           tabindex="0"
@@ -865,6 +897,9 @@ export class HztZoneCard extends LitElement {
           aria-valuemax=${MAX_TARGET}
           aria-valuenow=${shown.target}
           aria-valuetext="Target ${degrees(shown.target)}"
+          @pointerenter=${() => this.setHot("target")}
+          @pointerleave=${() => this.clearHot("target")}
+          @mousedown=${noFocus}
           @pointerdown=${(e: PointerEvent) => this.startDrag(e, "target")}
           @keydown=${(e: KeyboardEvent) => this.onHandleKey(e, "target")}
         >
@@ -874,13 +909,16 @@ export class HztZoneCard extends LitElement {
       <div class="band-scale">
         ${edges.map(
           (edge) => html`<span
-            class="edge ${edge.which} ${active === edge.which ? "active" : ""}"
+            class="edge ${edge.which} ${lit(edge.which)}"
             style="--at:${at(edge.value)}"
             role="slider"
             tabindex="0"
             aria-label=${edge.label}
             aria-valuenow=${edge.shown}
             aria-valuetext="${edge.words} ${degrees(edge.shown)}"
+            @pointerenter=${() => this.setHot(edge.which)}
+            @pointerleave=${() => this.clearHot(edge.which)}
+            @mousedown=${noFocus}
             @pointerdown=${(e: PointerEvent) => this.startDrag(e, edge.which)}
             @keydown=${(e: KeyboardEvent) => this.onHandleKey(e, edge.which)}
             ><span
@@ -1645,12 +1683,9 @@ export class HztZoneCard extends LitElement {
         width 140ms ease,
         background 140ms ease;
     }
-    .tick:hover .tick-line,
-    .tick.active .tick-line,
-    .band:has(.edge.low:hover, .edge.low:focus-visible) .tick.low .tick-line,
-    .band:has(.edge.high:hover, .edge.high:focus-visible)
-      .tick.high
-      .tick-line {
+    .tick.lit .tick-line,
+    .band:has(.edge.low:focus-visible) .tick.low .tick-line,
+    .band:has(.edge.high:focus-visible) .tick.high .tick-line {
       width: 4px;
       background: var(--hzt-text);
     }
@@ -1747,9 +1782,8 @@ export class HztZoneCard extends LitElement {
       transition: transform 140ms ease;
       transform-origin: 50% 0;
     }
-    .hand:hover .hand-face::after,
-    .hand:focus-visible .hand-face::after,
-    .hand.active .hand-face::after {
+    .hand.lit .hand-face::after,
+    .hand:focus-visible .hand-face::after {
       transform: scale(1.3);
     }
     .hand:focus-visible {
@@ -1812,16 +1846,12 @@ export class HztZoneCard extends LitElement {
       border-top-left-radius: 0;
       background: color-mix(in srgb, var(--hzt-cool) 16%, var(--hzt-card));
     }
-    .edge.low:hover,
-    .edge.low:focus-visible,
-    .edge.low.active,
-    .band:has(.tick.low:hover) .edge.low {
+    .edge.low.lit,
+    .edge.low:focus-visible {
       background: color-mix(in srgb, var(--hzt-heat) 30%, var(--hzt-card));
     }
-    .edge.high:hover,
-    .edge.high:focus-visible,
-    .edge.high.active,
-    .band:has(.tick.high:hover) .edge.high {
+    .edge.high.lit,
+    .edge.high:focus-visible {
       background: color-mix(in srgb, var(--hzt-cool) 30%, var(--hzt-card));
     }
 

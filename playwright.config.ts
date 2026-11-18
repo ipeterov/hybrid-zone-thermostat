@@ -14,7 +14,12 @@ export default defineConfig({
     baseURL: `http://localhost:${port}`,
     trace: "retain-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // The HA app on Apple devices is WebKit, which differs on focus,
+    // hover and clipping; tests tagged @webkit run there too.
+    { name: "webkit", grep: /@webkit/, use: { ...devices["Desktop Safari"] } },
+  ],
   webServer: {
     command: `npx vite frontend/harness --port ${port} --strictPort`,
     port,

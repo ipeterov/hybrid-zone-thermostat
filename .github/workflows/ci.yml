@@ -87,8 +87,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Install Playwright's Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright's Chromium and WebKit
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Run browser tests
         run: npm run test:browser
