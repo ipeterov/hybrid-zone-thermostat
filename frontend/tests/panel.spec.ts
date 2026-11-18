@@ -464,3 +464,15 @@ test("a climate unit has no switching settings", async ({ page }) => {
 
   await expect(side(page)).not.toContainText("Switched on and off");
 });
+
+test("the map ranks units only for what their zone is doing", async ({
+  page,
+}) => {
+  await open(page, FIXTURES.house);
+
+  // Living room heats: its heating order. Bedroom is idle: no order.
+  await expect(page.getByText("Would heat · #1")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /^Bedroom radiator Idle$/ }),
+  ).toBeVisible();
+});

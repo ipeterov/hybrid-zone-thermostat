@@ -382,24 +382,34 @@ export class HztZoneCard extends LitElement {
         No room units yet: add them on the Climate zones page.
       </p>`;
     }
-    const units = [...zone.units].sort(
-      (a, b) =>
-        (a.heat_rank ?? a.cool_rank ?? 99) - (b.heat_rank ?? b.cool_rank ?? 99),
-    );
-    const both = units.length === 1;
+    // The order that applies is the one for what the zone is doing; idle
+    // or off, neither does, so units keep the order they were set up in.
+    const direction = activeDirection(zone);
+    const rankOf = (u: ZoneUnit) =>
+      direction === "heat"
+        ? u.heat_rank
+        : direction === "cool"
+          ? u.cool_rank
+          : null;
+    const units = direction
+      ? [...zone.units].sort((a, b) => (rankOf(a) ?? 99) - (rankOf(b) ?? 99))
+      : zone.units;
+    let heading = "Room units";
+    if (units.length === 1) {
+      heading = "Room unit";
+    } else if (direction) {
+      heading = `Room units, in ${direction === "heat" ? "heating" : "cooling"} order`;
+    }
     return html`<div class="units">
-      <h3 class="eyebrow">
-        ${both ? "Room unit" : "Room units, in heating order"}
-      </h3>
-      ${units.map((unit) => this.renderUnit(zone, unit))}
+      <h3 class="eyebrow">${heading}</h3>
+      ${units.map((unit) => this.renderUnit(zone, unit, rankOf(unit)))}
     </div>`;
   }
 
-  private renderUnit(zone: Zone, unit: ZoneUnit) {
+  private renderUnit(zone: Zone, unit: ZoneUnit, rank: number | null) {
     const device = this.hass?.states[unit.entity_id];
     const demand = zone.demands[unit.id];
     const word = unitWord(zone, unit);
-    const rank = unit.heat_rank ?? unit.cool_rank;
     const hzt: string[] = [
       `HZT: ${word.charAt(0).toLowerCase()}${word.slice(1)}`,
     ];
@@ -422,7 +432,7 @@ export class HztZoneCard extends LitElement {
     const swingModes = device?.attributes.swing_modes;
     return html`<div class="unit-row">
       <span
-        class="rank ${zone.units.length > 1 ? "" : "dot"} ${demand?.mode ?? ""} ${
+        class="rank ${zone.units.length > 1 && rank ? "" : "dot"} ${demand?.mode ?? ""} ${
           word === "Locked out" ? "locked" : ""
         }"
         >${zone.units.length > 1 && rank ? rank : ""}</span
@@ -902,6 +912,16 @@ export class HztZoneCard extends LitElement {
       font-size: 14px;
     }
   `;
+}
+
+function activeDirection(zone: Zone): "heat" | "cool" | undefined {
+  if (zone.state === "heating") {
+    return "heat";
+  }
+  if (zone.state === "cooling") {
+    return "cool";
+  }
+  return undefined;
 }
 
 function capitalize(text: string): string {

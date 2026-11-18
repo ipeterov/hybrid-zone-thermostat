@@ -469,7 +469,16 @@ export class HztPanel extends LitElement {
     top: number,
   ) {
     const demand = this.status(unit.zone_id).demands[unit.id];
-    const rank = unitsOf(config, unit.zone_id).indexOf(unit) + 1;
+    // The rank in the order for what the zone is doing; none when idle.
+    const zone = config.zones.find((z) => z.id === unit.zone_id);
+    const state = this.status(unit.zone_id).state;
+    const order =
+      state === "heating"
+        ? zone?.heating_order
+        : state === "cooling"
+          ? zone?.cooling_order
+          : undefined;
+    const position = order ? order.indexOf(unit.id) + 1 : 0;
     const word = this.unitWord(unit);
     const selected =
       this.aside.kind === "unit" && this.aside.unitId === unit.id;
@@ -485,7 +494,9 @@ export class HztPanel extends LitElement {
       }}
     >
       <span class="node-name">${unit.name}</span>
-      <span class="node-sub">${capitalize(word)} · #${rank}</span>
+      <span class="node-sub"
+        >${capitalize(word)}${position ? ` · #${position}` : ""}</span
+      >
     </button>`;
   }
 

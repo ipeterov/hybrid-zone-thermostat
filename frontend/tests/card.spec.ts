@@ -292,3 +292,41 @@ test("a heater isn't on standby while the zone cools", async ({ page }) => {
   );
   await expect(card(page, "Living room")).not.toContainText("standby");
 });
+
+function withZoneState(fixture: Fixture | undefined, zoneState: string) {
+  return {
+    ...fixture,
+    states: (fixture?.states ?? []).map((entity) =>
+      entity.entity_id === "climate.living_room"
+        ? {
+            ...entity,
+            attributes: { ...entity.attributes, zone_state: zoneState },
+          }
+        : entity,
+    ),
+  };
+}
+
+test("units follow the order for what the zone is doing", async ({ page }) => {
+  await openCards(page, withZoneState(FIXTURES.heater, "cooling"));
+  const living = card(page, "Living room");
+
+  await expect(living).toContainText("Room units, in cooling order");
+  await expect(living.locator(".rank")).toHaveText(["1", ""]);
+});
+
+test("heating shows the heating order", async ({ page }) => {
+  await openCards(page, FIXTURES.heater);
+  const living = card(page, "Living room");
+
+  await expect(living).toContainText("Room units, in heating order");
+  await expect(living.locator(".rank")).toHaveText(["1", "2"]);
+});
+
+test("idle, no order applies", async ({ page }) => {
+  await openCards(page, withZoneState(FIXTURES.heater, "idle"));
+  const living = card(page, "Living room");
+
+  await expect(living.locator("h3")).toHaveText("Room units");
+  await expect(living.locator(".rank")).toHaveText(["", ""]);
+});
