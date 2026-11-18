@@ -94,6 +94,20 @@ commit.
 warnings, so a new one stands out. Don't hide a warning with a filter or a
 flag; fix its cause, or say why it can't be fixed yet.
 
+**UI rules, for every screen and component:**
+
+- **Functional before polished.** A control appears when there's working
+  behaviour behind it, not before.
+- **Intuitive in every state.** Design for empty, one, several, unavailable,
+  off and error, not just the demo state. An order of one unit isn't an
+  order; say what that unit does instead.
+- **Every setting shows its upshot.** Next to a setting, say what it changes
+  in this house now ("Below −15 °C the Hisense AC stops heating; it's 12 °C
+  now"). If its effect can't be stated, the setting is in the wrong place or
+  shouldn't exist yet.
+- **Phone and desktop both.** The HA mobile app is a first-class target:
+  check 390 px as well as desktop.
+
 **Look at the design and at your work, often.** The designs are static
 pages in `docs/design/` (exported from the design canvas); `.claude/
 launch.json`'s `designs` server shows them in the browser pane. Your work is
