@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HZT add central unit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&amp;family=Roboto+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#f4f5f7}
+a{color:#0277bd}a:hover{color:#01579b}
+</style>
+</head>
+<body>
+<div style="font-family: Roboto, system-ui, sans-serif; color: #1c1f23; background: #f4f5f7; min-height: 1040px; box-sizing: border-box;">
+  <div style="background: #fff; border-bottom: 1px solid #e3e5e8; padding: 0 24px; min-height: 56px; display: flex; align-items: center; gap: 12px; font-size: 14px; color: #5f6368; flex-wrap: wrap;">
+    <a href="Panel.dc.html" style="color: #5f6368; text-decoration: none;">Climate zones</a><span>›</span><a href="#" style="color: #5f6368; text-decoration: none;">Central units</a><span>›</span>
+    <span style="color: #1c1f23; font-size: 18px; font-weight: 500;">New central unit</span>
+  </div>
+
+  <div style="max-width: 1100px; margin: 0 auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 20px;">
+
+    <section style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+      <h2 style="margin: 0; font-size: 17px; font-weight: 500;">1 · What is it?</h2>
+      <p style="margin: 0; font-size: 14px; color: #5f6368;">A central unit is equipment that several room units depend on. Home Assistant usually sees it as just a switch, or not at all.</p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
+        <label style="display: flex; gap: 10px; border: 2px solid #0277bd; background: #f3f9fe; border-radius: 12px; padding: 12px;"><input type="radio" name="kind" checked style="margin-top: 3px;"><span><span style="display: block; font-size: 14px; font-weight: 500;">Boiler</span><span style="display: block; font-size: 13px; color: #5f6368;">Feeds radiators. Fires when rooms call.</span></span></label>
+        <label style="display: flex; gap: 10px; border: 1px solid #e3e5e8; border-radius: 12px; padding: 12px;"><input type="radio" name="kind" style="margin-top: 3px;"><span><span style="display: block; font-size: 14px; font-weight: 500;">Multi-split outdoor unit</span><span style="display: block; font-size: 13px; color: #5f6368;">Several indoor ACs. All heat or all cool.</span></span></label>
+        <label style="display: flex; gap: 10px; border: 1px solid #e3e5e8; border-radius: 12px; padding: 12px;"><input type="radio" name="kind" style="margin-top: 3px;"><span><span style="display: block; font-size: 14px; font-weight: 500;">Air-to-water heat pump</span><span style="display: block; font-size: 13px; color: #5f6368;">Feeds radiators or underfloor.</span></span></label>
+      </div>
+      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #5f6368; max-width: 360px;">Name
+        <input type="text" value="Boiler" style="height: 44px; border-radius: 8px; border: 1px solid #c4c7cc; padding: 0 10px; font: 15px Roboto, sans-serif; color: #1c1f23;">
+      </label>
+    </section>
+
+    <section style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+      <h2 style="margin: 0; font-size: 17px; font-weight: 500;">2 · How does HZT turn it on?</h2>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <label style="display: flex; gap: 10px; border: 2px solid #0277bd; background: #f3f9fe; border-radius: 12px; padding: 12px; flex-wrap: wrap; align-items: flex-start;">
+          <input type="radio" name="ctl" checked style="margin-top: 3px;">
+          <span style="flex: 1 1 240px;"><span style="display: block; font-size: 14px; font-weight: 500;">A relay or switch</span><span style="display: block; font-size: 13px; color: #5f6368;">On/off thermostat contacts, e.g. a Zigbee relay wired to the boiler.</span></span>
+          <span style="flex: 1 1 320px; display: flex; gap: 8px; align-items: center;">
+            <span style="flex: 1; min-height: 44px; box-sizing: border-box; border: 1px solid #c4c7cc; background: #fff; border-radius: 8px; padding: 6px 10px; display: flex; flex-direction: column; justify-content: center;">
+              <span style="font-size: 14px;">Boiler relay</span>
+              <span style="font-family: 'Roboto Mono', monospace; font-size: 11px; color: #5f6368;">switch.boiler_relay · SONOFF ZBMINIR2 · Utility room</span>
+            </span>
+            <button type="button" style="height: 44px; border-radius: 8px; border: 1px solid #c4c7cc; background: #fff; padding: 0 12px; font: 500 13px Roboto, sans-serif; white-space: nowrap;">Test 10 s</button>
+          </span>
+        </label>
+        <label style="display: flex; gap: 10px; border: 1px solid #e3e5e8; border-radius: 12px; padding: 12px;"><input type="radio" name="ctl" style="margin-top: 3px;"><span><span style="display: block; font-size: 14px; font-weight: 500;">A climate entity</span><span style="display: block; font-size: 13px; color: #5f6368;">OpenTherm gateway or vendor integration. HZT sends a flow temperature or on/off.</span></span></label>
+        <label style="display: flex; gap: 10px; border: 1px solid #e3e5e8; border-radius: 12px; padding: 12px;"><input type="radio" name="ctl" style="margin-top: 3px;"><span><span style="display: block; font-size: 14px; font-weight: 500;">It runs itself</span><span style="display: block; font-size: 13px; color: #5f6368;">The boiler fires on its own when valves open. HZT only knows the radiators share it.</span></span></label>
+      </div>
+      <p style="margin: 0; font-size: 13px; color: #8a4700; background: #fff8f0; border-radius: 10px; padding: 10px 12px;">HZT will own this switch. Turning it on or off elsewhere shows as a manual override on the dashboard.</p>
+    </section>
+
+    <section style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+      <h2 style="margin: 0; font-size: 17px; font-weight: 500;">3 · Which radiators does it feed?</h2>
+      <p style="margin: 0; font-size: 14px; color: #5f6368;">Home Assistant doesn’t know your pipework. Tick every radiator on this boiler’s circuit.</p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px;">
+        <fieldset style="border: 1px solid #e3e5e8; border-radius: 12px; padding: 10px 14px; margin: 0;">
+          <legend style="font-size: 13px; color: #5f6368; padding: 0 4px;">Living room</legend>
+          <label style="display: flex; gap: 10px; align-items: center; min-height: 40px; font-size: 14px;"><input type="checkbox" checked> Radiator TRV <span style="font-family: 'Roboto Mono', monospace; font-size: 11px; color: #5f6368;">climate.lr_trv</span></label>
+        </fieldset>
+        <fieldset style="border: 1px solid #e3e5e8; border-radius: 12px; padding: 10px 14px; margin: 0;">
+          <legend style="font-size: 13px; color: #5f6368; padding: 0 4px;">Bedroom</legend>
+          <label style="display: flex; gap: 10px; align-items: center; min-height: 40px; font-size: 14px;"><input type="checkbox" checked> Radiator TRV <span style="font-family: 'Roboto Mono', monospace; font-size: 11px; color: #5f6368;">climate.bedroom_trv</span></label>
+        </fieldset>
+        <fieldset style="border: 1px solid #e3e5e8; border-radius: 12px; padding: 10px 14px; margin: 0;">
+          <legend style="font-size: 13px; color: #5f6368; padding: 0 4px;">Entryway</legend>
+          <label style="display: flex; gap: 10px; align-items: center; min-height: 40px; font-size: 14px;"><input type="checkbox" checked> Radiator TRV <span style="font-family: 'Roboto Mono', monospace; font-size: 11px; color: #5f6368;">climate.entry_trv</span></label>
+        </fieldset>
+      </div>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 13px; color: #5f6368;">
+        <span>Found 1 TRV not in any zone yet:</span>
+        <span style="background: #f1f3f4; border-radius: 8px; padding: 6px 10px; color: #1c1f23;">Bathroom TRV <span style="font-family: 'Roboto Mono', monospace; font-size: 11px; color: #5f6368;">climate.bathroom_trv</span></span>
+        <button type="button" style="height: 36px; border: 0; background: none; color: #0277bd; font: 500 13px Roboto, sans-serif; padding: 0;">Add as new zone</button>
+      </div>
+    </section>
+
+    <section style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+      <h2 style="margin: 0; font-size: 17px; font-weight: 500;">4 · When to fire</h2>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; color: #3c4043;">
+        <span>Fire when</span>
+        <input type="number" value="1" aria-label="Rooms calling" style="width: 60px; height: 36px; border-radius: 8px; border: 1px solid #c4c7cc; padding: 0 8px; font: 14px Roboto, sans-serif;">
+        <span>room or more is calling for its radiator. Keep at least</span>
+        <input type="number" value="1" aria-label="Valves held open" style="width: 60px; height: 36px; border-radius: 8px; border: 1px solid #c4c7cc; padding: 0 8px; font: 14px Roboto, sans-serif;">
+        <span>valve open while firing.</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; font-size: 13px;">
+        <label style="display: flex; flex-direction: column; gap: 4px; color: #5f6368;">Min on (min)<input type="number" value="10" style="height: 44px; border-radius: 8px; border: 1px solid #c4c7cc; padding: 0 10px; font: 15px Roboto, sans-serif;"></label>
+        <label style="display: flex; flex-direction: column; gap: 4px; color: #5f6368;">Min off (min)<input type="number" value="5" style="height: 44px; border-radius: 8px; border: 1px solid #c4c7cc; padding: 0 10px; font: 15px Roboto, sans-serif;"></label>
+        <label style="display: flex; flex-direction: column; gap: 4px; color: #5f6368;">Start delay (s)<input type="number" value="60" style="height: 44px; border-radius: 8px; border: 1px solid #c4c7cc; padding: 0 10px; font: 15px Roboto, sans-serif;"></label>
+        <label style="display: flex; flex-direction: column; gap: 4px; color: #5f6368;">If HA loses the switch
+          <select style="height: 44px; border-radius: 8px; border: 1px solid #c4c7cc; background: #fff; padding: 0 8px; font: 15px Roboto, sans-serif;"><option>Repair alert</option><option>Repair alert + push</option></select>
+        </label>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button type="button" style="height: 40px; border-radius: 20px; border: 1px solid #c4c7cc; background: #fff; padding: 0 18px; font: 500 14px Roboto, sans-serif;">Cancel</button>
+        <button type="button" style="height: 40px; border-radius: 20px; border: 0; background: #0277bd; color: #fff; padding: 0 20px; font: 500 14px Roboto, sans-serif;">Create boiler</button>
+      </div>
+    </section>
+  </div>
+</div>
+</body>
+</html>

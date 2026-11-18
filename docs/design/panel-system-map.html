@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HZT panel system map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&amp;family=Roboto+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#f4f5f7}
+a{color:#0277bd}a:hover{color:#01579b}
+</style>
+</head>
+<body>
+<div style="font-family: Roboto, system-ui, sans-serif; color: #1c1f23; background: #f4f5f7; min-height: 1060px; box-sizing: border-box;">
+  <div style="background: #fff; border-bottom: 1px solid #e3e5e8; padding: 0 24px; min-height: 56px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap;">
+    <span style="font-size: 20px; font-weight: 500;">Climate zones</span>
+    <nav aria-label="Panel sections" style="display: flex; gap: 20px; font-size: 14px; flex-wrap: wrap;">
+      <a href="#" style="color: #0277bd; border-bottom: 2px solid #0277bd; padding: 18px 0 16px; text-decoration: none;">System</a>
+      <a href="#" style="color: #5f6368; padding: 18px 0 16px; text-decoration: none;">Zones</a>
+      <a href="#" style="color: #5f6368; padding: 18px 0 16px; text-decoration: none;">Room units</a>
+      <a href="#" style="color: #5f6368; padding: 18px 0 16px; text-decoration: none;">Central units</a>
+      <a href="#" style="color: #5f6368; padding: 18px 0 16px; text-decoration: none;">Decision log</a>
+    </nav>
+  </div>
+
+  <div style="max-width: 1400px; margin: 0 auto; padding: 24px 20px; display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start;">
+
+    <div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 20px;">
+      <section style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 20px;">
+        <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 12px;">
+          <h2 style="margin: 0; font-size: 17px; font-weight: 500; flex: 1;">What heats and cools what</h2>
+          <a href="Central.dc.html" style="display: inline-flex; align-items: center; height: 36px; box-sizing: border-box; border-radius: 18px; border: 1px solid #c4c7cc; background: #fff; padding: 0 14px; font: 500 13px Roboto, sans-serif; color: #1c1f23; text-decoration: none;">+ Central unit</a>
+          <a href="#" style="display: inline-flex; align-items: center; height: 36px; box-sizing: border-box; border-radius: 18px; border: 1px solid #c4c7cc; background: #fff; padding: 0 14px; font: 500 13px Roboto, sans-serif; color: #1c1f23; text-decoration: none;">+ Room unit</a>
+          <a href="#" style="display: inline-flex; align-items: center; height: 36px; box-sizing: border-box; border-radius: 18px; border: 1px solid #c4c7cc; background: #fff; padding: 0 14px; font: 500 13px Roboto, sans-serif; color: #1c1f23; text-decoration: none;">+ Zone from area</a>
+        </div>
+        <div style="overflow-x: auto;">
+          <div style="position: relative; width: 860px; height: 400px; margin: 0 auto;">
+            <div style="position: absolute; left: 20px; top: 0; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: #5f6368;">Central units</div>
+            <div style="position: absolute; left: 330px; top: 0; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: #5f6368;">Room units</div>
+            <div style="position: absolute; left: 640px; top: 0; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: #5f6368;">Zones</div>
+            <svg width="860" height="400" style="position: absolute; left: 0; top: 0;" aria-hidden="true">
+              <path d="M220 168 C275 168 275 143 330 143" fill="none" stroke="#b0b5bb" stroke-width="2"></path>
+              <path d="M220 168 C275 168 275 218 330 218" fill="none" stroke="#b0b5bb" stroke-width="2"></path>
+              <path d="M220 168 C275 168 275 293 330 293" fill="none" stroke="#b0b5bb" stroke-width="2"></path>
+              <path d="M550 68 C595 68 595 98 640 98" fill="none" stroke="#ff8100" stroke-width="3"></path>
+              <path d="M550 143 C595 143 595 98 640 98" fill="none" stroke="#b0b5bb" stroke-width="2"></path>
+              <path d="M550 363 C595 363 595 98 640 98" fill="none" stroke="#b0b5bb" stroke-width="2" stroke-dasharray="5 5"></path>
+              <path d="M550 218 C595 218 595 218 640 218" fill="none" stroke="#b0b5bb" stroke-width="2"></path>
+              <path d="M550 293 C595 293 595 308 640 308" fill="none" stroke="#b0b5bb" stroke-width="2"></path>
+            </svg>
+
+            <div style="position: absolute; left: 20px; top: 140px; width: 200px; height: 56px; box-sizing: border-box; border: 1px solid #d6d9dd; border-radius: 12px; background: #fff; padding: 8px 12px;"><div style="font-size: 14px; font-weight: 500;">Boiler</div><div style="font-size: 12px; color: #5f6368;">Off · via switch.boiler_relay</div></div>
+            <div style="position: absolute; left: 20px; top: 260px; width: 200px; box-sizing: border-box; border: 1px dashed #c4c7cc; border-radius: 12px; padding: 10px 12px; font-size: 12px; line-height: 1.45; color: #5f6368;">Add an outdoor unit here only if it serves several rooms (multi-split). A single split AC needs nothing.</div>
+
+            <div style="position: absolute; left: 330px; top: 40px; width: 220px; height: 56px; box-sizing: border-box; border: 2px solid #ff8100; border-radius: 12px; background: #fff8f0; padding: 7px 11px;"><div style="font-size: 14px; font-weight: 500;">Hisense AC</div><div style="font-size: 12px; color: #8a4700;">Heating · self-contained</div></div>
+            <div style="position: absolute; left: 330px; top: 115px; width: 220px; height: 56px; box-sizing: border-box; border: 1px solid #d6d9dd; border-radius: 12px; background: #fff; padding: 8px 12px;"><div style="font-size: 14px; font-weight: 500;">Living room radiator</div><div style="font-size: 12px; color: #5f6368;">Standby · TRV</div></div>
+            <div style="position: absolute; left: 330px; top: 190px; width: 220px; height: 56px; box-sizing: border-box; border: 1px solid #d6d9dd; border-radius: 12px; background: #fff; padding: 8px 12px;"><div style="font-size: 14px; font-weight: 500;">Bedroom radiator</div><div style="font-size: 12px; color: #5f6368;">Idle · TRV</div></div>
+            <div style="position: absolute; left: 330px; top: 265px; width: 220px; height: 56px; box-sizing: border-box; border: 1px solid #d6d9dd; border-radius: 12px; background: #fff; padding: 8px 12px;"><div style="font-size: 14px; font-weight: 500;">Entryway radiator</div><div style="font-size: 12px; color: #5f6368;">Off · TRV</div></div>
+            <div style="position: absolute; left: 330px; top: 335px; width: 220px; height: 56px; box-sizing: border-box; border: 1px dashed #b0b5bb; border-radius: 12px; background: #fafafa; padding: 8px 12px;"><div style="font-size: 14px; font-weight: 500; color: #5f6368;">Panel heater</div><div style="font-size: 12px; color: #5f6368;">Locked out · smart plug</div></div>
+
+            <div style="position: absolute; left: 640px; top: 70px; width: 200px; height: 56px; box-sizing: border-box; border: 2px solid #1c1f23; border-radius: 12px; background: #fff; padding: 7px 11px;"><div style="font-size: 14px; font-weight: 500;">Living room</div><div style="font-size: 12px; color: #5f6368;">21.4 → 22.0 · heating</div></div>
+            <div style="position: absolute; left: 640px; top: 190px; width: 200px; height: 56px; box-sizing: border-box; border: 1px solid #d6d9dd; border-radius: 12px; background: #fff; padding: 8px 12px;"><div style="font-size: 14px; font-weight: 500;">Bedroom</div><div style="font-size: 12px; color: #5f6368;">19.8 → 20.0 · idle</div></div>
+            <div style="position: absolute; left: 640px; top: 280px; width: 200px; height: 56px; box-sizing: border-box; border: 1px solid #d6d9dd; border-radius: 12px; background: #fff; padding: 8px 12px;"><div style="font-size: 14px; font-weight: 500;">Entryway</div><div style="font-size: 12px; color: #5f6368;">Off · frost guard</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
+          <h2 style="margin: 0; font-size: 17px; font-weight: 500; flex: 1;">Which units may run, by outdoor temperature</h2>
+          <span style="font-size: 13px; color: #5f6368;">Drag a bar’s end to move a lockout</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 10px 16px; align-items: center; font-size: 13px;">
+          <span>Hisense AC</span>
+          <div style="position: relative; height: 26px;">
+            <div style="position: absolute; left: 9.1%; width: 70.9%; top: 2px; height: 10px; border-radius: 5px; background: #ffb066;"></div>
+            <div style="position: absolute; left: 63.6%; width: 36.4%; top: 14px; height: 10px; border-radius: 5px; background: #64b5f6;"></div>
+          </div>
+          <span>Radiators (boiler)</span>
+          <div style="position: relative; height: 26px;"><div style="position: absolute; left: 0; width: 69.1%; top: 8px; height: 10px; border-radius: 5px; background: #ffb066;"></div></div>
+          <span>Panel heater</span>
+          <div style="position: relative; height: 26px;"><div style="position: absolute; left: 0; width: 18.2%; top: 8px; height: 10px; border-radius: 5px; background: #ffb066;"></div></div>
+          <span></span>
+          <div style="position: relative; height: 34px; border-top: 1px solid #d6d9dd;">
+            <div style="position: absolute; left: 49.4%; top: -100px; width: 2px; height: 100px; background: #1c1f23;"></div>
+            <span style="position: absolute; left: 49.4%; top: 4px; transform: translateX(-50%); background: #1c1f23; color: #fff; border-radius: 6px; padding: 2px 6px; font-family: 'Roboto Mono', monospace; font-size: 11px;">now 7.2</span>
+            <span style="position: absolute; left: 0; top: 6px; font-family: 'Roboto Mono', monospace; font-size: 11px; color: #5f6368;">−20</span>
+            <span style="position: absolute; left: 18.2%; top: 6px; font-family: 'Roboto Mono', monospace; font-size: 11px; color: #5f6368;">−10</span>
+            <span style="position: absolute; left: 72.7%; top: 6px; font-family: 'Roboto Mono', monospace; font-size: 11px; color: #5f6368;">20</span>
+            <span style="position: absolute; right: 0; top: 6px; font-family: 'Roboto Mono', monospace; font-size: 11px; color: #5f6368;">35 °C</span>
+          </div>
+        </div>
+        <div style="display: flex; gap: 16px; font-size: 12px; color: #5f6368; flex-wrap: wrap;">
+          <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 14px; height: 8px; border-radius: 4px; background: #ffb066;"></span>may heat</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 14px; height: 8px; border-radius: 4px; background: #64b5f6;"></span>may cool</span>
+          <span>Below −15 °C the AC is locked out; the radiators move up to first.</span>
+        </div>
+      </section>
+    </div>
+
+    <aside style="flex: 1 1 340px; min-width: 0; background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+      <div>
+        <div style="font-size: 12px; color: #5f6368;">Selected zone</div>
+        <h2 style="margin: 2px 0 0; font-size: 20px; font-weight: 500;">Living room</h2>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; font-size: 13px;">
+        <div style="background: #f8f9fa; border-radius: 10px; padding: 10px;"><div style="color: #5f6368;">Room sensor</div><div style="font-weight: 500;">CO₂ monitor</div></div>
+        <div style="background: #f8f9fa; border-radius: 10px; padding: 10px;"><div style="color: #5f6368;">Fallback</div><div style="font-weight: 500;">AC reading −5 °C</div></div>
+        <div style="background: #f8f9fa; border-radius: 10px; padding: 10px;"><div style="color: #5f6368;">Idle band</div><div style="font-weight: 500;">+1.5 °C above target</div></div>
+        <div style="background: #f8f9fa; border-radius: 10px; padding: 10px;"><div style="color: #5f6368;">Window</div><div style="font-weight: 500;">binary_sensor.lr_window</div></div>
+      </div>
+
+      <div style="display: flex; align-items: baseline; margin-top: 4px;">
+        <span style="flex: 1; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: #5f6368;">Heating order</span>
+        <a href="Staging.dc.html" style="font-size: 13px;">Edit rules</a>
+      </div>
+      <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px;">
+        <li style="display: flex; gap: 10px; align-items: flex-start; border: 1px solid #e3e5e8; border-radius: 12px; padding: 10px 12px;">
+          <span style="width: 24px; height: 24px; border-radius: 12px; background: #ff8100; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: none;">1</span>
+          <div style="flex: 1;"><div style="font-size: 14px; font-weight: 500;">Hisense AC</div><div style="font-size: 12px; color: #5f6368;">Runs whenever the room is below target</div></div>
+        </li>
+        <li style="display: flex; gap: 10px; align-items: flex-start; border: 1px solid #e3e5e8; border-radius: 12px; padding: 10px 12px;">
+          <span style="width: 24px; height: 24px; border-radius: 12px; border: 2px solid #c4c7cc; box-sizing: border-box; color: #5f6368; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: none;">2</span>
+          <div style="flex: 1;"><div style="font-size: 14px; font-weight: 500;">Living room radiator</div><div style="font-size: 12px; color: #5f6368;">Joins after <strong style="color: #1c1f23;">30 min</strong> below target with #1 running, or <strong style="color: #1c1f23;">1.5 °C</strong> below</div></div>
+        </li>
+        <li style="display: flex; gap: 10px; align-items: flex-start; border: 1px solid #e3e5e8; border-radius: 12px; padding: 10px 12px;">
+          <span style="width: 24px; height: 24px; border-radius: 12px; border: 2px solid #c4c7cc; box-sizing: border-box; color: #5f6368; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: none;">3</span>
+          <div style="flex: 1;"><div style="font-size: 14px; font-weight: 500;">Panel heater</div><div style="font-size: 12px; color: #5f6368;">Joins after <strong style="color: #1c1f23;">60 min</strong> with #1–2 running, or <strong style="color: #1c1f23;">2.5 °C</strong> below</div></div>
+        </li>
+      </ol>
+      <div style="font-size: 12px; color: #5f6368; line-height: 1.5;">A locked-out or unavailable unit is skipped; the next one moves up. Back at target, the last to join leaves first.</div>
+      <div style="font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: #5f6368; margin-top: 4px;">Cooling order</div>
+      <ol style="list-style: none; margin: 0; padding: 0;">
+        <li style="display: flex; gap: 10px; align-items: center; border: 1px solid #e3e5e8; border-radius: 12px; padding: 10px 12px;">
+          <span style="width: 24px; height: 24px; border-radius: 12px; background: #2b7fd4; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: none;">1</span>
+          <div style="flex: 1;"><div style="font-size: 14px; font-weight: 500;">Hisense AC</div><div style="font-size: 12px; color: #5f6368;">Only unit that cools</div></div>
+        </li>
+      </ol>
+    </aside>
+  </div>
+</div>
+</body>
+</html>

@@ -94,6 +94,16 @@ commit.
 warnings, so a new one stands out. Don't hide a warning with a filter or a
 flag; fix its cause, or say why it can't be fixed yet.
 
+**Look at the design and at your work, often.** The designs are static
+pages in `docs/design/` (exported from the design canvas); `.claude/
+launch.json`'s `designs` server shows them in the browser pane. Your work is
+on the harness (`harness` server): `?fixture=empty|living-room|house`
+(frontend/harness/fixtures.ts) and `&theme=dark` for HA's dark theme, which
+the owner uses. Before and after any UI change, screenshot both at the same
+size, compare them, and fix what differs; check phone width too. Then
+deploy and look at it in the real HA. Tests passing says nothing about how
+it looks.
+
 **Every user-facing behaviour of the panel and card has a browser test**
 (`frontend/tests/`, on the harness page), shipped in the same change. The
 controller's behaviour is covered by tests in `tests/control/`, and by

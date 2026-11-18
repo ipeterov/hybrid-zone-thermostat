@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "harness",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "frontend/harness", "--port", "5179", "--strictPort"],
+      "port": 5179
+    },
+    {
+      "name": "designs",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "5180", "--directory", "docs/design"],
+      "port": 5180
+    }
+  ]
+}

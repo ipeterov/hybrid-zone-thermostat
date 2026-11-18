@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HZT zone order and stage rules</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&amp;family=Roboto+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#f4f5f7}
+a{color:#0277bd}a:hover{color:#01579b}
+</style>
+</head>
+<body>
+<div style="font-family: Roboto, system-ui, sans-serif; color: #1c1f23; background: #f4f5f7; min-height: 1040px; box-sizing: border-box;">
+  <div style="background: #fff; border-bottom: 1px solid #e3e5e8; padding: 0 24px; min-height: 56px; display: flex; align-items: center; gap: 12px; font-size: 14px; color: #5f6368; flex-wrap: wrap;">
+    <a href="Panel.dc.html" style="color: #5f6368; text-decoration: none;">Climate zones</a><span>›</span><a href="#" style="color: #5f6368; text-decoration: none;">Zones</a><span>›</span>
+    <span style="color: #1c1f23; font-size: 18px; font-weight: 500;">Living room · order</span>
+    <span style="flex: 1;"></span>
+    <div role="tablist" aria-label="Direction" style="display: flex; background: #f1f3f4; border-radius: 999px; padding: 3px;">
+      <button type="button" role="tab" aria-selected="true" style="height: 34px; border-radius: 999px; border: 0; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.12); padding: 0 16px; font: 500 13px Roboto, sans-serif; color: #8a4700;">Heating</button>
+      <button type="button" role="tab" aria-selected="false" style="height: 34px; border-radius: 999px; border: 0; background: transparent; padding: 0 16px; font: 500 13px Roboto, sans-serif; color: #5f6368;">Cooling</button>
+    </div>
+  </div>
+
+  <div style="max-width: 1400px; margin: 0 auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 20px;">
+
+    <section style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 20px; display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
+        <h2 style="margin: 0; font-size: 17px; font-weight: 500; flex: 1;">How these rules played out, last cold evening</h2>
+        <span style="font-size: 13px; color: #5f6368;">From the decision log · Tue 18:00–20:00</span>
+      </div>
+      <div style="overflow-x: auto;">
+        <svg viewBox="0 0 1000 300" width="100%" style="min-width: 760px; display: block;" role="img" aria-label="Room falls below target; the AC runs alone for 30 minutes without recovering; the radiator joins; at target the radiator leaves and the AC holds">
+          <line x1="60" y1="80" x2="980" y2="80" stroke="#8a4700" stroke-width="1.5" stroke-dasharray="5 5"></line>
+          <text x="54" y="84" text-anchor="end" font-size="12" fill="#8a4700" font-family="Roboto">22.0</text>
+          <text x="54" y="164" text-anchor="end" font-size="12" fill="#5f6368" font-family="Roboto">21.0</text>
+          <line x1="60" y1="160" x2="980" y2="160" stroke="#eceef1" stroke-width="1"></line>
+          <path d="M60 112 C150 125 220 140 290 144 C380 146 500 110 597 80 C700 62 800 70 980 76" fill="none" stroke="#1c1f23" stroke-width="2.5"></path>
+
+          <line x1="290" y1="20" x2="290" y2="280" stroke="#9aa0a6" stroke-width="1" stroke-dasharray="3 4"></line>
+          <line x1="597" y1="20" x2="597" y2="280" stroke="#9aa0a6" stroke-width="1" stroke-dasharray="3 4"></line>
+          <text x="298" y="30" font-size="12" fill="#1c1f23" font-family="Roboto" font-weight="500">18:30 · #2 joins</text>
+          <text x="298" y="46" font-size="12" fill="#5f6368" font-family="Roboto">30 min below target with #1 on</text>
+          <text x="605" y="30" font-size="12" fill="#1c1f23" font-family="Roboto" font-weight="500">19:10 · #2 leaves</text>
+          <text x="605" y="46" font-size="12" fill="#5f6368" font-family="Roboto">back at target, last in leaves first</text>
+
+          <text x="54" y="234" text-anchor="end" font-size="12" fill="#3c4043" font-family="Roboto">#1 AC</text>
+          <rect x="60" y="222" width="920" height="16" rx="8" fill="#ffb066"></rect>
+          <text x="66" y="234" font-size="11" fill="#5c2f00" font-family="Roboto">running, output follows the gap to target</text>
+          <text x="54" y="266" text-anchor="end" font-size="12" fill="#3c4043" font-family="Roboto">#2 Radiator</text>
+          <rect x="60" y="254" width="920" height="16" rx="8" fill="#f1f3f4"></rect>
+          <rect x="290" y="254" width="307" height="16" rx="8" fill="#ff8100"></rect>
+          <text x="60" y="296" font-size="11" fill="#5f6368" font-family="Roboto">18:00</text>
+          <text x="980" y="296" text-anchor="end" font-size="11" fill="#5f6368" font-family="Roboto">20:00</text>
+        </svg>
+      </div>
+    </section>
+
+    <section style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 20px; display: flex; flex-direction: column; gap: 4px;">
+      <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding-bottom: 8px;">
+        <h2 style="margin: 0; font-size: 17px; font-weight: 500; flex: 1;">Heating order</h2>
+        <span style="font-size: 13px; color: #5f6368;">Drag to reorder. Put the cheapest unit first.</span>
+      </div>
+
+      <div style="display: flex; gap: 14px; align-items: center; padding: 14px 0; border-top: 1px solid #eceef1; flex-wrap: wrap;">
+        <span aria-hidden="true" style="color: #9aa0a6; font-size: 18px; cursor: grab;">⠿</span>
+        <span style="width: 28px; height: 28px; border-radius: 14px; background: #ff8100; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex: none;">1</span>
+        <div style="flex: 1 1 220px;"><div style="font-size: 15px; font-weight: 500;">Hisense AC</div><div style="font-size: 13px; color: #5f6368;">Allowed −15 to 24 °C outdoor</div></div>
+        <div style="flex: 2 1 420px; font-size: 14px; color: #3c4043;">Runs whenever the room is below target.</div>
+      </div>
+
+      <div style="display: flex; gap: 14px; align-items: center; padding: 14px 0; border-top: 1px solid #eceef1; flex-wrap: wrap;">
+        <span aria-hidden="true" style="color: #9aa0a6; font-size: 18px; cursor: grab;">⠿</span>
+        <span style="width: 28px; height: 28px; border-radius: 14px; border: 2px solid #c4c7cc; box-sizing: border-box; color: #5f6368; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex: none;">2</span>
+        <div style="flex: 1 1 220px;"><div style="font-size: 15px; font-weight: 500;">Living room radiator</div><div style="font-size: 13px; color: #5f6368;">via Boiler · allowed below 18 °C</div></div>
+        <div style="flex: 2 1 420px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; color: #3c4043;">
+          <span>Joins when the room is still below target after</span>
+          <input type="number" value="30" aria-label="Minutes before #2 joins" style="width: 64px; height: 36px; border-radius: 8px; border: 1px solid #c4c7cc; padding: 0 8px; font: 14px Roboto, sans-serif;">
+          <span>min with #1 running, or more than</span>
+          <input type="number" value="1.5" aria-label="Degrees below target for #2 to join at once" style="width: 64px; height: 36px; border-radius: 8px; border: 1px solid #c4c7cc; padding: 0 8px; font: 14px Roboto, sans-serif;">
+          <span>°C below.</span>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 14px; align-items: center; padding: 14px 0; border-top: 1px solid #eceef1; flex-wrap: wrap;">
+        <span aria-hidden="true" style="color: #9aa0a6; font-size: 18px; cursor: grab;">⠿</span>
+        <span style="width: 28px; height: 28px; border-radius: 14px; border: 2px solid #c4c7cc; box-sizing: border-box; color: #5f6368; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex: none;">3</span>
+        <div style="flex: 1 1 220px;"><div style="font-size: 15px; font-weight: 500;">Panel heater</div><div style="font-size: 13px; color: #5f6368;">Smart plug · allowed below −10 °C</div></div>
+        <div style="flex: 2 1 420px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; color: #3c4043;">
+          <span>Joins when the room is still below target after</span>
+          <input type="number" value="60" aria-label="Minutes before #3 joins" style="width: 64px; height: 36px; border-radius: 8px; border: 1px solid #c4c7cc; padding: 0 8px; font: 14px Roboto, sans-serif;">
+          <span>min with #1–2 running, or more than</span>
+          <input type="number" value="2.5" aria-label="Degrees below target for #3 to join at once" style="width: 64px; height: 36px; border-radius: 8px; border: 1px solid #c4c7cc; padding: 0 8px; font: 14px Roboto, sans-serif;">
+          <span>°C below.</span>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; padding-top: 14px; border-top: 1px solid #eceef1;">
+        <div style="background: #f8f9fa; border-radius: 12px; padding: 12px 14px; font-size: 13px; line-height: 1.5;"><strong style="font-weight: 500;">Locked out or unavailable?</strong> Skipped. Everything below it moves up a place, so at −18 °C the radiator is first and joins at once.</div>
+        <label style="background: #f8f9fa; border-radius: 12px; padding: 12px 14px; font-size: 13px; line-height: 1.5; display: flex; flex-direction: column; gap: 6px;"><strong style="font-weight: 500;">When does a unit leave?</strong>
+          <select style="height: 36px; border-radius: 8px; border: 1px solid #c4c7cc; background: #fff; padding: 0 8px; font: 14px Roboto, sans-serif;"><option>Back at target, last in leaves first</option><option>Within 0.3 °C of target for 10 min</option></select>
+        </label>
+        <div style="background: #f8f9fa; border-radius: 12px; padding: 12px 14px; font-size: 13px; line-height: 1.5;"><strong style="font-weight: 500;">Minimum run times</strong> on each unit still apply: a unit that just joined stays on at least its min run.</div>
+      </div>
+    </section>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard with custom HZT cards</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&amp;family=Roboto+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#f4f5f7}
+a{color:#0277bd}a:hover{color:#01579b}
+</style>
+</head>
+<body>
+<div style="font-family: Roboto, system-ui, sans-serif; color: #1c1f23; background: #f4f5f7; min-height: 980px; box-sizing: border-box;">
+  <div style="background: #fff; border-bottom: 1px solid #e3e5e8; padding: 0 24px; height: 56px; display: flex; align-items: center; gap: 24px;">
+    <span style="font-size: 20px; font-weight: 500;">Home</span>
+    <span style="font-size: 14px; color: #0277bd; border-bottom: 2px solid #0277bd; padding: 18px 0 16px;">Rooms</span>
+    <span style="font-size: 14px; color: #5f6368;">Energy</span>
+  </div>
+
+  <div style="max-width: 1240px; margin: 0 auto; padding: 24px 20px; display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start;">
+
+    <article style="flex: 999 1 560px; min-width: 0; background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 20px; display: flex; flex-direction: column; gap: 18px;">
+      <header style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <h2 style="margin: 0; font-size: 20px; font-weight: 500; flex: 1;">Living room</h2>
+        <span style="background: #fff3e0; color: #8a4700; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 500; display: inline-flex; gap: 6px; align-items: center;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3c3 4 5 6 5 10a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-6 1-9z"></path></svg>
+          Heating · stage 1 of 2
+        </span>
+        <button type="button" aria-label="Turn zone off" style="width: 40px; height: 40px; border-radius: 12px; border: 1px solid #e3e5e8; background: #fff; color: #5f6368; display: flex; align-items: center; justify-content: center;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8M6.3 7.3a8 8 0 1 0 11.4 0"></path></svg>
+        </button>
+      </header>
+
+      <div style="display: flex; gap: 32px; align-items: flex-end; flex-wrap: wrap;">
+        <div>
+          <div style="font-size: 13px; color: #5f6368;">Room</div>
+          <div style="font-size: 56px; line-height: 1;">21.4<span style="font-size: 24px; color: #5f6368;"> °C</span></div>
+          <div style="font-size: 12px; color: #5f6368; margin-top: 4px;">CO₂ monitor · 40 s ago</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button type="button" aria-label="Lower target" style="width: 48px; height: 48px; border-radius: 14px; border: 0; background: #f1f3f4; font-size: 22px; color: #1c1f23;">−</button>
+          <div style="text-align: center; min-width: 96px;">
+            <div style="font-size: 13px; color: #5f6368;">Target</div>
+            <div style="font-size: 34px; font-weight: 500; line-height: 1.1;">22.0</div>
+          </div>
+          <button type="button" aria-label="Raise target" style="width: 48px; height: 48px; border-radius: 14px; border: 0; background: #f1f3f4; font-size: 22px; color: #1c1f23;">+</button>
+        </div>
+        <div style="font-size: 13px; color: #5f6368; display: flex; gap: 6px; flex-wrap: wrap;">
+          <button type="button" style="height: 36px; border-radius: 999px; border: 0; background: #1c1f23; color: #fff; padding: 0 14px; font: 500 13px Roboto, sans-serif;">Home</button>
+          <button type="button" style="height: 36px; border-radius: 999px; border: 0; background: #f1f3f4; color: #3c4043; padding: 0 14px; font: 500 13px Roboto, sans-serif;">Away</button>
+          <button type="button" style="height: 36px; border-radius: 999px; border: 0; background: #f1f3f4; color: #3c4043; padding: 0 14px; font: 500 13px Roboto, sans-serif;">Sleep</button>
+        </div>
+      </div>
+
+      <div role="img" aria-label="Room 21.4 °C is in the heating range. Heats to 22.0, idle from 22.0 to 23.5, cools above 23.5." style="display: flex; flex-direction: column; gap: 4px;">
+        <div style="position: relative; height: 22px; font-size: 12px;">
+          <span style="position: absolute; left: 25%; transform: translateX(-50%); color: #8a4700; font-weight: 500;">Heating</span>
+          <span style="position: absolute; left: 42.5%; transform: translateX(-50%); background: #1c1f23; color: #fff; border-radius: 6px; padding: 2px 6px; font-family: 'Roboto Mono', monospace; font-size: 11px;">21.4</span>
+          <span style="position: absolute; left: 59.4%; transform: translateX(-50%); color: #5f6368; font-weight: 500;">Idle</span>
+          <span style="position: absolute; left: 84.4%; transform: translateX(-50%); color: #0d47a1; font-weight: 500;">Cooling</span>
+        </div>
+        <div style="position: relative; height: 16px;">
+          <div style="position: absolute; left: 0; right: 0; top: 4px; height: 8px; border-radius: 4px; display: flex; overflow: hidden;">
+            <div style="width: 50%; background: #ffd8a8;"></div>
+            <div style="width: 18.75%; background: #eceff1;"></div>
+            <div style="width: 31.25%; background: #bbdefb;"></div>
+          </div>
+          <div style="position: absolute; left: 50%; top: 0; width: 2px; height: 16px; margin-left: -1px; background: #5f6368;"></div>
+          <div style="position: absolute; left: 68.75%; top: 0; width: 2px; height: 16px; margin-left: -1px; background: #5f6368;"></div>
+          <div style="position: absolute; left: 42.5%; top: 0; width: 16px; height: 16px; margin-left: -8px; box-sizing: border-box; border-radius: 8px; background: #1c1f23; border: 3px solid #fff; box-shadow: 0 0 0 1px #1c1f23;"></div>
+        </div>
+        <div style="position: relative; height: 16px; font-family: 'Roboto Mono', monospace; font-size: 11px; color: #5f6368;">
+          <span style="position: absolute; left: 0;">18</span>
+          <span style="position: absolute; left: 50%; transform: translateX(-50%); color: #1c1f23;">22.0</span>
+          <span style="position: absolute; left: 68.75%; transform: translateX(-50%); color: #1c1f23;">23.5</span>
+          <span style="position: absolute; right: 0;">26</span>
+        </div>
+      </div>
+
+      <div style="background: #f8f9fa; border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.5;">
+        <strong style="font-weight: 500;">Why:</strong> 0.6 °C below target for 14 min, so #1 (AC) is running. The radiator joins at 18:30 if the room is still below target.
+      </div>
+
+      <div style="display: flex; flex-direction: column;">
+        <div style="font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: #5f6368; padding-bottom: 6px;">Room units, in heating order</div>
+
+        <div style="display: flex; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid #eceef1; flex-wrap: wrap;">
+          <span style="width: 28px; height: 28px; border-radius: 14px; background: #ff8100; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex: none;">1</span>
+          <div style="flex: 1 1 200px; min-width: 0;">
+            <div style="font-size: 15px; font-weight: 500;">Hisense AC</div>
+            <div style="font-size: 13px; color: #5f6368;">Heating · 33 Hz · HZT set 27 °C (its sensor reads +5.1)</div>
+          </div>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #5f6368;">Fan
+            <select style="height: 36px; border-radius: 10px; border: 0; background: #f1f3f4; padding: 0 8px; font: 13px Roboto, sans-serif;"><option>Auto</option><option>Quiet</option></select>
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #5f6368;">Swing
+            <select style="height: 36px; border-radius: 10px; border: 0; background: #f1f3f4; padding: 0 8px; font: 13px Roboto, sans-serif;"><option>Vertical</option><option>Off</option></select>
+          </label>
+        </div>
+
+        <div style="display: flex; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid #eceef1;">
+          <span style="width: 28px; height: 28px; border-radius: 14px; background: #fff; border: 2px solid #c4c7cc; color: #5f6368; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex: none; box-sizing: border-box;">2</span>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 15px; font-weight: 500;">Radiator valve <span style="font-weight: 400; color: #5f6368;">via Boiler</span></div>
+            <div style="font-size: 13px; color: #5f6368;">Standby · joins at 18:30 if still below target</div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid #eceef1;">
+          <span style="width: 28px; height: 28px; border-radius: 14px; background: #f1f3f4; color: #80868b; display: flex; align-items: center; justify-content: center; flex: none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>
+          </span>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 15px; font-weight: 500; color: #5f6368;">Panel heater</div>
+            <div style="font-size: 13px; color: #5f6368;">Locked out · only below −10 °C outdoor (now 7.2)</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: #5f6368; padding-bottom: 6px;">Last 6 hours</div>
+        <svg viewBox="0 0 600 110" width="100%" height="110" role="img" aria-label="Room temperature rising toward target over 6 hours, heating for the last hour">
+          <rect x="500" y="0" width="100" height="96" fill="#fff3e0"></rect>
+          <rect x="120" y="0" width="60" height="96" fill="#e3f2fd"></rect>
+          <line x1="0" y1="40" x2="600" y2="40" stroke="#8a4700" stroke-width="1.5" stroke-dasharray="4 4"></line>
+          <path d="M0 44 L60 42 L120 34 L180 38 L240 42 L300 46 L360 50 L420 56 L500 60 L540 56 L600 50" fill="none" stroke="#1c1f23" stroke-width="2"></path>
+          <text x="2" y="108" font-size="11" fill="#5f6368" font-family="Roboto">12:00</text>
+          <text x="560" y="108" font-size="11" fill="#5f6368" font-family="Roboto">now</text>
+          <text x="124" y="12" font-size="11" fill="#0d47a1" font-family="Roboto">cooling</text>
+          <text x="504" y="12" font-size="11" fill="#8a4700" font-family="Roboto">heating</text>
+        </svg>
+      </div>
+    </article>
+
+    <div style="flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 16px;">
+      <article style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 16px; display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <h2 style="margin: 0; font-size: 17px; font-weight: 500; flex: 1;">Bedroom</h2>
+          <span style="background: #eceff1; color: #37474f; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 500;">Idle · in band</span>
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 10px;"><span style="font-size: 32px;">19.8</span><span style="font-size: 14px; color: #5f6368;">→ 20.0 °C</span></div>
+        <div style="font-size: 13px; color: #5f6368;">0.2 below target, inside idle band. Radiator ready.</div>
+      </article>
+
+      <article style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 16px; display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <h2 style="margin: 0; font-size: 17px; font-weight: 500; flex: 1;">Entryway</h2>
+          <span style="background: #f1f3f4; color: #5f6368; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 500;">Off · frost guard 7 °C</span>
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 10px;"><span style="font-size: 32px;">16.1</span><span style="font-size: 14px; color: #5f6368;">°C</span></div>
+      </article>
+
+      <article style="background: #fff; border-radius: 16px; border: 1px solid #e3e5e8; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+        <h2 style="margin: 0; font-size: 17px; font-weight: 500;">House</h2>
+        <div style="display: flex; justify-content: space-between; font-size: 14px;"><span style="color: #5f6368;">Outdoor</span><span>7.2 °C</span></div>
+        <div style="height: 1px; background: #eceef1;"></div>
+        <div style="display: flex; justify-content: space-between; gap: 12px; font-size: 14px;"><span>Boiler</span><span style="color: #5f6368; text-align: right;">Off · no radiator calling</span></div>
+        <div style="height: 1px; background: #eceef1;"></div>
+        <div style="font-size: 13px; color: #5f6368;">Today: AC 6.1 kWh · boiler 0 m³</div>
+      </article>
+    </div>
+  </div>
+</div>
+</body>
+</html>
