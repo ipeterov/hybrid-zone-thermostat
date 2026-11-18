@@ -172,9 +172,8 @@ def ha() -> None:
 @click.option(
     "--restart/--no-restart",
     default=None,
-    help="Restart HA core afterwards. By default, only if something other "
-    "than the frontend changed: the panel and card are served uncached, so "
-    "a browser reload picks them up.",
+    help="Restart HA core afterwards. By default, if anything changed: the "
+    "panel's and card's URLs carry a hash of the build, read at startup.",
 )
 def deploy(host: str, restart: bool | None) -> None:
     """Build, copy the integration to a real Home Assistant, restart it.
@@ -213,16 +212,12 @@ def deploy(host: str, restart: bool | None) -> None:
         click.echo(f"  {path}")
     if not changed:
         click.echo("Nothing changed.")
-    backend_changed = any(not path.startswith("frontend/") for path in changed)
-
-    if restart or (restart is None and backend_changed):
+    if restart or (restart is None and changed):
         click.echo("Checking the config and restarting HA core...")
         _run_or_exit(
             ["ssh", host, 'bash -lc "ha core check && ha core restart"']
         )
         click.echo("HA core restarted.")
-    elif changed:
-        click.echo("Frontend only: reload the browser.")
 
 
 def _rsync_changed_paths(output: str) -> list[str]:

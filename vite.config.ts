@@ -15,5 +15,10 @@ export default defineConfig({
       formats: ["es"],
       fileName: (_format, name) => `${name}.js`,
     },
+    rollupOptions: {
+      // Shared chunks get a content hash in their name, so a new build
+      // never reuses a cached one.
+      output: { chunkFileNames: "[name]-[hash].js" },
+    },
   },
 });

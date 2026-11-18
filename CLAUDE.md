@@ -64,7 +64,8 @@ Vocabulary, used in code and copy alike:
 - **Development runs against the owner's real HA**: `uv run dev deploy`
   (with `HZT_DEPLOY_HOST` set to the SSH target) builds, rsyncs the
   integration into its `/config/custom_components/`, and restarts HA core
-  if anything but the frontend changed. Restarting the owner's HA is
+  if anything changed (the panel's and card's URLs carry a hash of the
+  build, read at startup, so browsers never run a stale copy). Restarting the owner's HA is
   expected when deploying; check its logs afterwards (ha-mcp).
 - Releases: bump `version` in manifest.json and push. CI tags it, builds
   the zip and publishes a GitHub release; HACS installs from that.
