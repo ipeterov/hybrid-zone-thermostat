@@ -10,6 +10,20 @@ export interface Fixture {
 }
 
 // Which device each entity is on, as hass.entities has it.
+// Entity categories (a device's settings), as hass.entities has them.
+export const CATEGORY_OF: Record<string, string> = {
+  "switch.heater_plug_network_led": "config",
+};
+
+// Areas, as hass.entities / hass.areas have them.
+export const AREA_OF: Record<string, string> = {
+  "switch.living_room_heater_plug": "living_room",
+  "light.lava_lamp": "living_room",
+};
+export const AREAS: Record<string, { name: string }> = {
+  living_room: { name: "Living Room" },
+};
+
 export const DEVICE_OF: Record<string, string> = {
   "climate.living_room_hisense_ac": "hisense",
   "sensor.living_room_hisense_ac_compressor_frequency": "hisense",
@@ -167,6 +181,16 @@ export const DEVICES: HassEntity[] = [
     entity_id: "switch.living_room_heater_plug",
     state: "off",
     attributes: { friendly_name: "Heater plug" },
+  },
+  {
+    entity_id: "switch.heater_plug_network_led",
+    state: "on",
+    attributes: { friendly_name: "Heater plug Network LED" },
+  },
+  {
+    entity_id: "light.lava_lamp",
+    state: "on",
+    attributes: { friendly_name: "Lava lamp" },
   },
   climate("climate.bedroom_trv", "Bedroom radiator", ["heat"]),
   climate("climate.entryway_trv", "Entryway radiator", ["heat"]),

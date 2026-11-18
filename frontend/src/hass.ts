@@ -12,7 +12,17 @@ export interface Hass {
   states: Record<string, HassEntity>;
   // The entity registry, as the frontend has it: which device each
   // entity belongs to.
-  entities?: Record<string, { device_id?: string | null }>;
+  entities?: Record<
+    string,
+    {
+      device_id?: string | null;
+      area_id?: string | null;
+      entity_category?: string | null;
+      hidden?: boolean;
+    }
+  >;
+  devices?: Record<string, { area_id?: string | null }>;
+  areas?: Record<string, { name: string }>;
   callWS<T>(message: { type: string; [key: string]: unknown }): Promise<T>;
   callService(
     domain: string,
@@ -65,4 +75,13 @@ export const DOMAIN = "hybrid_zone_thermostat";
 export function friendlyName(hass: Hass, entityId: string): string {
   const name = hass.states[entityId]?.attributes.friendly_name;
   return typeof name === "string" ? name : entityId;
+}
+
+// The entity's area, or its device's, as HA's own pickers show it.
+export function areaName(hass: Hass, entityId: string): string | undefined {
+  const entry = hass.entities?.[entityId];
+  const areaId =
+    entry?.area_id ??
+    (entry?.device_id ? hass.devices?.[entry.device_id]?.area_id : undefined);
+  return areaId ? hass.areas?.[areaId]?.name : undefined;
 }

@@ -12,6 +12,7 @@ import {
   updateZone,
 } from "./config";
 import {
+  areaName,
   DOMAIN,
   friendlyName,
   type Hass,
@@ -1241,7 +1242,11 @@ export class HztPanel extends LitElement {
       .filter(
         (entity) =>
           entity.attributes.hzt_zone_id === undefined &&
-          !used.has(entity.entity_id),
+          !used.has(entity.entity_id) &&
+          // Not a device's settings ("Network LED", "Turbo mode"), nor
+          // one HA hides (switch_as_x hides the switch it wraps).
+          !this.hass?.entities?.[entity.entity_id]?.entity_category &&
+          !this.hass?.entities?.[entity.entity_id]?.hidden,
       )
       .sort((a, b) =>
         friendlyName(this.hass as Hass, a.entity_id).localeCompare(
@@ -1278,10 +1283,13 @@ export class HztPanel extends LitElement {
         );
       }
     };
-    const option = (entity: HassEntity) =>
-      html`<option value=${entity.entity_id}>
-        ${friendlyName(this.hass as Hass, entity.entity_id)}
+    const option = (entity: HassEntity) => {
+      const area = areaName(this.hass as Hass, entity.entity_id);
+      const name = friendlyName(this.hass as Hass, entity.entity_id);
+      return html`<option value=${entity.entity_id}>
+        ${area ? `${name} · ${area}` : name}
       </option>`;
+    };
     return html`<form class="side-form" @submit=${add}>
       <button
         type="button"
@@ -1308,7 +1316,7 @@ export class HztPanel extends LitElement {
           }
           ${
             switches.length
-              ? html`<optgroup label="Relays and smart plugs">
+              ? html`<optgroup label="Relays, smart plugs and switched lights">
                 ${switches.map(option)}
               </optgroup>`
               : nothing
@@ -1322,9 +1330,9 @@ export class HztPanel extends LitElement {
           its modes.
         </li>
         <li>
-          <strong>A heater on a relay or smart plug</strong> (a switch): HZT
-          switches its power on and off, for longer or shorter as the room
-          needs.
+          <strong>A heater on a relay or smart plug</strong> (a switch, or a
+          light, as many plugs show up): HZT switches its power on and off, for
+          longer or shorter as the room needs.
         </li>
       </ul>
       <div class="side-actions start">
@@ -1341,9 +1349,10 @@ export class HztPanel extends LitElement {
   }
 }
 
+// Relays and plugs: switches, and lights, as many plugs are exposed.
 function isSwitchEntity(entityId: string): boolean {
-  return (
-    entityId.startsWith("switch.") || entityId.startsWith("input_boolean.")
+  return ["switch.", "light.", "input_boolean."].some((prefix) =>
+    entityId.startsWith(prefix),
   );
 }
 

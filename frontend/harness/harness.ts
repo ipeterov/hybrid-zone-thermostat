@@ -2,7 +2,14 @@ import "../src/panel";
 import "../src/card";
 
 import type { Hass, HassEntity, HouseConfig } from "../src/hass";
-import { DEVICE_OF, FIXTURES, type Fixture } from "./fixtures";
+import {
+  AREA_OF,
+  AREAS,
+  CATEGORY_OF,
+  DEVICE_OF,
+  FIXTURES,
+  type Fixture,
+} from "./fixtures";
 
 // A test sets `window.hztFixture` (via page.addInitScript) to choose what
 // the fake backend holds; a person opens ?fixture=<name> (fixtures.ts).
@@ -74,11 +81,22 @@ function makeHass(): Hass {
   return {
     states,
     entities: Object.fromEntries(
-      Object.entries(DEVICE_OF).map(([entityId, device]) => [
+      [
+        ...new Set([
+          ...Object.keys(DEVICE_OF),
+          ...Object.keys(CATEGORY_OF),
+          ...Object.keys(AREA_OF),
+        ]),
+      ].map((entityId) => [
         entityId,
-        { device_id: device },
+        {
+          device_id: DEVICE_OF[entityId] ?? null,
+          area_id: AREA_OF[entityId] ?? null,
+          entity_category: CATEGORY_OF[entityId] ?? null,
+        },
       ]),
     ),
+    areas: AREAS,
     callWS<T>(message: { type: string; [key: string]: unknown }): Promise<T> {
       window.hztCalls.push(message);
       if (fixture.error) {

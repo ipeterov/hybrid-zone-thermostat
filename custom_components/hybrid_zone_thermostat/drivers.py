@@ -186,7 +186,8 @@ class ClimateDriver:
 
 # ---- Switches: relays and smart plugs ---------------------------------
 
-SWITCH_DOMAINS = ("switch", "input_boolean")
+# Plugs and relays are often exposed as lights (Zigbee plugs, switch_as_x).
+SWITCH_DOMAINS = ("switch", "light", "input_boolean")
 
 
 def on_minutes(

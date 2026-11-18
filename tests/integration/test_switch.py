@@ -101,3 +101,35 @@ async def test_switching_the_heater_by_hand_hands_the_zone_over(
     attributes = hass.states.get(CLIMATE).attributes
     assert attributes["zone_state"] == "manual"
     assert "Heater was set to off by hand" in attributes["reason"]
+
+
+@pytest.mark.parametrize(
+    "house_config",
+    [
+        {
+            **HEATER_ROOM,
+            "room_units": [
+                {**HEATER_ROOM["room_units"][0], "entity_id": "light.lava_lamp"}
+            ],
+        }
+    ],
+)
+async def test_a_plug_exposed_as_a_light_is_switched_too(
+    hass: HomeAssistant, entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+):
+    calls: list[ServiceCall] = []
+
+    async def handle(call: ServiceCall) -> None:
+        calls.append(call)
+        hass.states.async_set(
+            "light.lava_lamp", "on" if call.service == "turn_on" else "off"
+        )
+
+    for service in ("turn_on", "turn_off"):
+        hass.services.async_register("light", service, handle)
+    hass.states.async_set("light.lava_lamp", "off")
+    await settle(hass)
+    await tick(hass, freezer, 0.5)
+
+    assert [call.service for call in calls] == ["turn_on"]
+    assert hass.states.get(CLIMATE).attributes["units"][0]["kind"] == "switch"

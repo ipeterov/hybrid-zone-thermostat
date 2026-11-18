@@ -436,9 +436,11 @@ test("the device picker separates climate entities from relays", async ({
 
   await side(page).getByRole("button", { name: "+ Room unit" }).click();
 
+  // Lights count (plugs often show up as lights); a device's settings
+  // switches don't.
   await expect(
-    side(page).locator("optgroup[label='Relays and smart plugs'] option"),
-  ).toHaveText(["Heater plug"]);
+    side(page).locator("optgroup[label^='Relays'] option"),
+  ).toHaveText(["Heater plug · Living Room", "Lava lamp · Living Room"]);
 });
 
 test("a heater's cycle says what it does", async ({ page }) => {
