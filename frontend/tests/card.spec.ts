@@ -243,7 +243,7 @@ test("a unit's row says what the device itself is doing", async ({ page }) => {
     "Cooling · set 20 °C · reads 24 °C · compressor 46 Hz",
   );
   await expect(living).toContainText("HZT: cooling");
-  await expect(living.locator(".room.glow.cool")).toHaveCount(1);
+  await expect(living.locator("ha-card.cool .aurora.on")).toHaveCount(2);
 });
 
 test("no glow while nothing actually runs, even if HZT would", async ({
@@ -254,7 +254,7 @@ test("no glow while nothing actually runs, even if HZT would", async ({
 
   await expect(living).toContainText("Off · reads 24 °C");
   await expect(living).not.toContainText("compressor");
-  await expect(living.locator(".room.glow")).toHaveCount(0);
+  await expect(living.locator(".aurora.on")).toHaveCount(0);
 });
 
 test("a heater's row says how long it's on", async ({ page }) => {

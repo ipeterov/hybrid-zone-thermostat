@@ -127,7 +127,13 @@ export class HztZoneCard extends LitElement {
     }
     const zone = readZone(entity as HassEntity);
     const word = zoneWord(zone);
-    return html`<ha-card @click=${(e: MouseEvent) => this.onCardClick(e, zone.entityId)}>
+    const glow = this.runningMode(zone);
+    return html`<ha-card
+      class=${glow ?? ""}
+      @click=${(e: MouseEvent) => this.onCardClick(e, zone.entityId)}
+    >
+      <div class="aurora one ${glow ? "on" : ""}" aria-hidden="true"></div>
+      <div class="aurora two ${glow ? "on" : ""}" aria-hidden="true"></div>
       <div class="head">
         <h2>
           <button class="link" @click=${() => this.moreInfo(zone.entityId)}>
@@ -199,9 +205,8 @@ export class HztZoneCard extends LitElement {
       : "No room sensor";
     const age = ago(sensor?.last_updated, Date.now());
     const target = zone.target;
-    const glow = this.runningMode(zone);
     return html`<div class="numbers">
-      <div class="room ${glow ? `glow ${glow}` : ""}">
+      <div class="room">
         <span class="label">Room</span>
         <span class="big"
           >${zone.room === undefined ? "–" : zone.room.toFixed(1)}<span
@@ -613,36 +618,51 @@ export class HztZoneCard extends LitElement {
     a {
       color: var(--primary-color, #0277bd);
     }
-    .room {
+    /* The aurora: two blurred, overlapping glows behind the top of the
+       card while a unit is actually heating or cooling, with no edge to
+       read as a shape (docs: the canvas's "zone card glow options", C). */
+    ha-card {
+      position: relative;
+      overflow: hidden;
       isolation: isolate;
     }
-    .room .big {
-      position: relative;
-    }
-    /* A soft glow behind the room temperature while a unit is actually
-       heating or cooling, as HA's own climate controls colour by action. */
-    .room.glow .big::before {
-      content: "";
+    .aurora {
       position: absolute;
       z-index: -1;
-      left: 50%;
-      top: 50%;
-      width: 220px;
-      height: 150px;
-      transform: translate(-50%, -50%);
-      background: radial-gradient(
-        closest-side,
-        var(--glow-color) 0%,
-        transparent 100%
-      );
-      opacity: 0.4;
+      top: -60px;
+      left: -60px;
+      right: -60px;
+      height: 380px;
       pointer-events: none;
+      opacity: 0;
+      transition: opacity 600ms ease;
     }
-    .room.glow.heat {
-      --glow-color: var(--hzt-heat);
+    .aurora.on {
+      opacity: 1;
     }
-    .room.glow.cool {
-      --glow-color: var(--hzt-cool);
+    .aurora.one {
+      filter: blur(24px);
+      background: radial-gradient(
+        55% 65% at 18% 40%,
+        color-mix(in srgb, var(--glow) 38%, transparent),
+        transparent 70%
+      );
+    }
+    .aurora.two {
+      filter: blur(30px);
+      background: radial-gradient(
+        45% 55% at 52% 24%,
+        color-mix(in srgb, var(--glow-light) 16%, transparent),
+        transparent 70%
+      );
+    }
+    ha-card.heat {
+      --glow: var(--hzt-heat);
+      --glow-light: #ffbe5a;
+    }
+    ha-card.cool {
+      --glow: var(--hzt-cool);
+      --glow-light: #50c8ff;
     }
     .unit-text .device {
       color: var(--hzt-text);
