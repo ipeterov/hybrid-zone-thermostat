@@ -9,6 +9,12 @@ export interface Fixture {
   error?: string;
 }
 
+// Which device each entity is on, as hass.entities has it.
+export const DEVICE_OF: Record<string, string> = {
+  "climate.living_room_hisense_ac": "hisense",
+  "sensor.living_room_hisense_ac_compressor_frequency": "hisense",
+};
+
 function temperature(id: string, name: string, value: string): HassEntity {
   return {
     entity_id: id,
@@ -140,6 +146,16 @@ export const DEVICES: HassEntity[] = [
       swing_mode: "vertical",
       temperature: 23,
       current_temperature: 24,
+      hvac_action: "off",
+    },
+  },
+  {
+    entity_id: "sensor.living_room_hisense_ac_compressor_frequency",
+    state: "0.0",
+    attributes: {
+      friendly_name: "Hisense AC Compressor frequency",
+      device_class: "frequency",
+      unit_of_measurement: "Hz",
     },
   },
   climate("climate.living_room_trv", "Living room radiator", ["heat"]),
@@ -281,6 +297,35 @@ export const FIXTURES: Record<string, Fixture> = {
     },
     states: [
       ...DEVICES,
+      {
+        ...JUST_THE_AC_STATUS,
+        attributes: { ...JUST_THE_AC_STATUS.attributes, shadow: false },
+      },
+    ],
+  },
+  cooling: {
+    config: {
+      ...JUST_THE_AC,
+      zones: JUST_THE_AC.zones.map((z) => ({ ...z, shadow: false })),
+    },
+    states: [
+      ...DEVICES.map((e) => {
+        if (e.entity_id === "climate.living_room_hisense_ac") {
+          return {
+            ...e,
+            state: "cool",
+            attributes: {
+              ...e.attributes,
+              hvac_action: "cooling",
+              temperature: 20,
+            },
+          };
+        }
+        if (e.entity_id.endsWith("compressor_frequency")) {
+          return { ...e, state: "46.0" };
+        }
+        return e;
+      }),
       {
         ...JUST_THE_AC_STATUS,
         attributes: { ...JUST_THE_AC_STATUS.attributes, shadow: false },

@@ -23,6 +23,7 @@ export interface Demand {
 }
 
 export interface Zone {
+  id: string;
   entityId: string;
   name: string;
   enabled: boolean;
@@ -45,6 +46,7 @@ export function readZone(entity: HassEntity): Zone {
   const a = entity.attributes;
   const name = a.friendly_name;
   return {
+    id: typeof a.hzt_zone_id === "string" ? a.hzt_zone_id : "",
     entityId: entity.entity_id,
     name: typeof name === "string" ? name : entity.entity_id,
     enabled: entity.state !== "off",

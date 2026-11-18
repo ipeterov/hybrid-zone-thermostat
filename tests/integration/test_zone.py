@@ -197,3 +197,24 @@ async def test_an_inconsistent_config_is_refused(
     assert not response["success"]
     assert response["error"]["code"] == "invalid_config"
     assert message in response["error"]["message"]
+
+
+async def test_the_target_can_change_while_the_zone_is_off(
+    hass: HomeAssistant, entry: MockConfigEntry
+):
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_HVAC_MODE,
+        {ATTR_ENTITY_ID: CLIMATE, "hvac_mode": HVACMode.OFF},
+        blocking=True,
+    )
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_TEMPERATURE,
+        {ATTR_ENTITY_ID: CLIMATE, ATTR_TEMPERATURE: 19.5},
+        blocking=True,
+    )
+
+    state = hass.states.get(CLIMATE)
+    assert state.state == HVACMode.OFF
+    assert state.attributes[ATTR_TEMPERATURE] == 19.5

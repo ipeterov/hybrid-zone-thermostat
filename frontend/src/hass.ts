@@ -10,6 +10,9 @@ export interface HassEntity {
 
 export interface Hass {
   states: Record<string, HassEntity>;
+  // The entity registry, as the frontend has it: which device each
+  // entity belongs to.
+  entities?: Record<string, { device_id?: string | null }>;
   callWS<T>(message: { type: string; [key: string]: unknown }): Promise<T>;
   callService(
     domain: string,

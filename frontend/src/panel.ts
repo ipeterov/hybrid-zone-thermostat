@@ -167,6 +167,16 @@ export class HztPanel extends LitElement {
     }
   });
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    // The zone card's settings link opens its zone: /climate-zones?zone=…
+    const zone = new URLSearchParams(location.search).get("zone");
+    if (zone) {
+      this.selected = zone;
+      this.aside = { kind: "zone" };
+    }
+  }
+
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.resizeObserver.disconnect();

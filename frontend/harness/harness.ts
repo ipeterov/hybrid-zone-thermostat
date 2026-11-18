@@ -2,7 +2,7 @@ import "../src/panel";
 import "../src/card";
 
 import type { Hass, HassEntity, HouseConfig } from "../src/hass";
-import { FIXTURES, type Fixture } from "./fixtures";
+import { DEVICE_OF, FIXTURES, type Fixture } from "./fixtures";
 
 // A test sets `window.hztFixture` (via page.addInitScript) to choose what
 // the fake backend holds; a person opens ?fixture=<name> (fixtures.ts).
@@ -73,6 +73,12 @@ function setAttribute(entityId: string, changes: Record<string, unknown>) {
 function makeHass(): Hass {
   return {
     states,
+    entities: Object.fromEntries(
+      Object.entries(DEVICE_OF).map(([entityId, device]) => [
+        entityId,
+        { device_id: device },
+      ]),
+    ),
     callWS<T>(message: { type: string; [key: string]: unknown }): Promise<T> {
       window.hztCalls.push(message);
       if (fixture.error) {
@@ -103,6 +109,20 @@ function makeHass(): Hass {
 }
 
 const hass = makeHass();
+
+// What HA's frontend would do with these: open a dialog, change page.
+document.addEventListener("hass-more-info", (event) => {
+  window.hztCalls.push({
+    type: "more-info",
+    entityId: (event as CustomEvent).detail.entityId,
+  });
+});
+window.addEventListener("location-changed", () => {
+  window.hztCalls.push({
+    type: "navigate",
+    path: location.pathname + location.search,
+  });
+});
 
 if (params.get("view") === "card") {
   // Every zone's card, laid out like a dashboard section.

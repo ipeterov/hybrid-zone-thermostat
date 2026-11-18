@@ -67,6 +67,44 @@ export class HztZoneCard extends LitElement {
     return { columns: 12, min_columns: 6 };
   }
 
+  // HA's conventions: a card opens the entity's more-info dialog, and
+  // navigates by pushing history and announcing it.
+  private moreInfo(entityId: string) {
+    this.dispatchEvent(
+      new CustomEvent("hass-more-info", {
+        detail: { entityId },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private navigate(path: string) {
+    history.pushState(null, "", path);
+    window.dispatchEvent(
+      new CustomEvent("location-changed", { detail: { replace: false } }),
+    );
+  }
+
+  // A click anywhere on the card that isn't on one of its controls opens
+  // the zone's more-info, as tile and thermostat cards do.
+  private onCardClick(event: MouseEvent, entityId: string) {
+    const interactive = event
+      .composedPath()
+      .some(
+        (node) =>
+          node instanceof HTMLElement &&
+          ["BUTTON", "SELECT", "A", "LABEL", "OPTION"].includes(node.tagName),
+      );
+    if (!interactive) {
+      this.moreInfo(entityId);
+    }
+  }
+
+  private settingsPath(zone: Zone): string {
+    return `/climate-zones?zone=${encodeURIComponent(zone.id)}`;
+  }
+
   private call(
     service: string,
     data: Record<string, unknown>,
@@ -89,9 +127,13 @@ export class HztZoneCard extends LitElement {
     }
     const zone = readZone(entity as HassEntity);
     const word = zoneWord(zone);
-    return html`<ha-card>
+    return html`<ha-card @click=${(e: MouseEvent) => this.onCardClick(e, zone.entityId)}>
       <div class="head">
-        <h2>${zone.name}</h2>
+        <h2>
+          <button class="link" @click=${() => this.moreInfo(zone.entityId)}>
+            ${zone.name}
+          </button>
+        </h2>
         ${word ? html`<span class="chip ${zone.state ?? ""}">${word}</span>` : nothing}
         <button
           class="icon power ${zone.enabled ? "on" : ""}"
@@ -106,6 +148,22 @@ export class HztZoneCard extends LitElement {
             <path d="M12 3v8M6.3 7.3a8 8 0 1 0 11.4 0" />
           </svg>
         </button>
+        <a
+          class="icon settings"
+          href=${this.settingsPath(zone)}
+          aria-label="${zone.name} settings"
+          @click=${(e: MouseEvent) => {
+            e.preventDefault();
+            this.navigate(this.settingsPath(zone));
+          }}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"
+            />
+          </svg>
+        </a>
       </div>
       ${this.renderNumbers(zone)} ${this.renderBand(zone)}
       ${
@@ -117,6 +175,14 @@ export class HztZoneCard extends LitElement {
         zone.shadow
           ? html`<p class="small">
             Shadow mode: HZT decides but sends nothing to the units.
+            <a
+              href=${this.settingsPath(zone)}
+              @click=${(e: MouseEvent) => {
+                e.preventDefault();
+                this.navigate(this.settingsPath(zone));
+              }}
+              >Go live in Climate zones</a
+            >
           </p>`
           : nothing
       }
@@ -133,8 +199,9 @@ export class HztZoneCard extends LitElement {
       : "No room sensor";
     const age = ago(sensor?.last_updated, Date.now());
     const target = zone.target;
+    const glow = this.runningMode(zone);
     return html`<div class="numbers">
-      <div class="room">
+      <div class="room ${glow ? `glow ${glow}` : ""}">
         <span class="label">Room</span>
         <span class="big"
           >${zone.room === undefined ? "–" : zone.room.toFixed(1)}<span
@@ -142,7 +209,18 @@ export class HztZoneCard extends LitElement {
             >°C</span
           ></span
         >
-        <span class="small">${sensorName}${age ? ` · ${age}` : ""}</span>
+        <span class="small"
+          >${
+            zone.roomSensor
+              ? html`<button
+                class="link"
+                @click=${() => this.moreInfo(zone.roomSensor as string)}
+              >
+                ${sensorName}
+              </button>`
+              : sensorName
+          }${age ? ` · ${age}` : ""}</span
+        >
       </div>
       ${
         target === undefined
@@ -151,7 +229,6 @@ export class HztZoneCard extends LitElement {
             <button
               class="step"
               aria-label="Lower the target"
-              ?disabled=${!zone.enabled}
               @click=${() =>
                 this.call("set_temperature", {
                   entity_id: zone.entityId,
@@ -167,7 +244,6 @@ export class HztZoneCard extends LitElement {
             <button
               class="step"
               aria-label="Raise the target"
-              ?disabled=${!zone.enabled}
               @click=${() =>
                 this.call("set_temperature", {
                   entity_id: zone.entityId,
@@ -179,6 +255,75 @@ export class HztZoneCard extends LitElement {
           </div>`
       }
     </div>`;
+  }
+
+  // What the zone's units are actually doing, read from the devices
+  // themselves: true in shadow mode too.
+  private runningMode(zone: Zone): "heat" | "cool" | undefined {
+    for (const unit of zone.units) {
+      const action = this.hass?.states[unit.entity_id]?.attributes.hvac_action;
+      if (action === "heating") {
+        return "heat";
+      }
+      if (action === "cooling") {
+        return "cool";
+      }
+    }
+    return undefined;
+  }
+
+  // A sensor on the same device reporting a frequency, as an AC's
+  // compressor does.
+  private compressor(device: HassEntity): string | undefined {
+    const deviceId = this.hass?.entities?.[device.entity_id]?.device_id;
+    if (!(deviceId && this.hass)) {
+      return undefined;
+    }
+    for (const [entityId, entry] of Object.entries(this.hass.entities ?? {})) {
+      if (entry.device_id !== deviceId) {
+        continue;
+      }
+      const state = this.hass.states[entityId];
+      if (
+        state?.attributes.device_class === "frequency" &&
+        Number(state.state) > 0
+      ) {
+        return `${Number(state.state)} ${state.attributes.unit_of_measurement ?? "Hz"}`;
+      }
+    }
+    return undefined;
+  }
+
+  // The device's own state, so the dashboard needs no separate tile.
+  private deviceSummary(device: HassEntity | undefined): string {
+    if (!device) {
+      return "Not found in Home Assistant";
+    }
+    if (device.state === "unavailable") {
+      return "Unavailable";
+    }
+    const a = device.attributes;
+    const parts: string[] = [];
+    const action =
+      typeof a.hvac_action === "string" ? a.hvac_action : undefined;
+    if (device.state === "off") {
+      parts.push("Off");
+    } else {
+      parts.push(
+        capitalize(action && action !== "off" ? action : device.state),
+      );
+      if (typeof a.temperature === "number") {
+        parts.push(`set ${a.temperature} °C`);
+      }
+    }
+    if (typeof a.current_temperature === "number") {
+      parts.push(`reads ${a.current_temperature} °C`);
+    }
+    const compressor = this.compressor(device);
+    if (compressor) {
+      parts.push(`compressor ${compressor}`);
+    }
+    return parts.join(" · ");
   }
 
   // Heating below the target, idle up to target + band, cooling above.
@@ -255,31 +400,20 @@ export class HztZoneCard extends LitElement {
     const demand = zone.demands[unit.id];
     const word = unitWord(zone, unit);
     const rank = unit.heat_rank ?? unit.cool_rank;
-    const details: string[] = [];
+    const hzt: string[] = [
+      `HZT: ${word.charAt(0).toLowerCase()}${word.slice(1)}`,
+    ];
     if (word === "Locked out") {
       const t =
         zone.state === "heating"
           ? unit.heat_lockout_below
           : unit.cool_lockout_below;
       if (t !== null) {
-        details.push(`below ${wholeDegrees(t)} outdoor`);
+        hzt.push(`below ${wholeDegrees(t)} outdoor`);
       }
-    } else if (
-      device &&
-      device.state !== "unavailable" &&
-      !(word === "Off" && device.state === "off")
-    ) {
-      const setpoint = device.attributes.temperature;
-      details.push(
-        device.state === "off"
-          ? "it’s off"
-          : typeof setpoint === "number"
-            ? `it’s set to ${device.state} ${setpoint} °C`
-            : `it’s on ${device.state}`,
-      );
     }
     if (unit.note) {
-      details.push(unit.note);
+      hzt.push(unit.note);
     }
     const fanModes = device?.attributes.fan_modes;
     const swingModes = device?.attributes.swing_modes;
@@ -291,8 +425,11 @@ export class HztZoneCard extends LitElement {
         >${zone.units.length > 1 && rank ? rank : ""}</span
       >
       <div class="unit-text">
-        <span class="unit-name">${unit.name}</span>
-        <span class="small">${[word, ...details].join(" · ")}</span>
+        <button class="link unit-name" @click=${() => this.moreInfo(unit.entity_id)}>
+          ${unit.name}
+        </button>
+        <span class="small device">${this.deviceSummary(device)}</span>
+        <span class="small">${hzt.join(" · ")}</span>
       </div>
       ${
         Array.isArray(fanModes) && device
@@ -424,6 +561,78 @@ export class HztZoneCard extends LitElement {
       align-items: center;
       justify-content: center;
       color: var(--hzt-muted);
+    }
+    .icon.settings {
+      width: 40px;
+      height: 40px;
+      flex: none;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--hzt-muted);
+    }
+    .icon.settings:hover {
+      background: var(--hzt-subtle);
+    }
+    .icon.settings circle,
+    .icon.settings path {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+    }
+    ha-card {
+      cursor: pointer;
+    }
+    button.link {
+      border: 0;
+      background: none;
+      padding: 0;
+      margin: 0;
+      font: inherit;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    button.link:hover {
+      text-decoration: underline;
+    }
+    a {
+      color: var(--primary-color, #0277bd);
+    }
+    .room {
+      isolation: isolate;
+    }
+    .room .big {
+      position: relative;
+    }
+    /* A soft glow behind the room temperature while a unit is actually
+       heating or cooling, as HA's own climate controls colour by action. */
+    .room.glow .big::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      left: 50%;
+      top: 50%;
+      width: 220px;
+      height: 150px;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(
+        closest-side,
+        var(--glow-color) 0%,
+        transparent 100%
+      );
+      opacity: 0.4;
+      pointer-events: none;
+    }
+    .room.glow.heat {
+      --glow-color: var(--hzt-heat);
+    }
+    .room.glow.cool {
+      --glow-color: var(--hzt-cool);
+    }
+    .unit-text .device {
+      color: var(--hzt-text);
     }
     .icon.power.on {
       color: var(--hzt-text);

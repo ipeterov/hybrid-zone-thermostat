@@ -384,3 +384,14 @@ test("on a wide screen, leaves the sidebar to HA", async ({ page }) => {
     page.getByRole("button", { name: "Open the sidebar" }),
   ).toHaveCount(0);
 });
+
+test("?zone= opens that zone", async ({ page }) => {
+  await page.addInitScript((f) => {
+    window.hztFixture = f;
+  }, FIXTURES.house ?? {});
+  await page.goto("/?zone=bedroom");
+
+  await expect(
+    side(page).getByRole("heading", { name: "Bedroom" }),
+  ).toBeVisible();
+});

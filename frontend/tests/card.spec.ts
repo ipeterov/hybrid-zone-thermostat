@@ -26,7 +26,7 @@ test("shows the room against its target, the decision and why", async ({
 
   await expect(living.getByText("Would heat").first()).toBeVisible();
   await expect(living).toContainText("21.4");
-  await expect(living).toContainText(/CO2 Monitor Temperature · \d+ s ago/);
+  await expect(living).toContainText(/CO2 Monitor Temperature\s*· \d+ s ago/);
   await expect(living).toContainText(/Target\s*22\.0/);
   await expect(
     living.getByRole("img", {
@@ -78,9 +78,9 @@ test("lists units in order with what each is doing", async ({ page }) => {
 
   await expect(living).toContainText("Room units, in heating order");
   await expect(living).toContainText("Hisense AC");
-  await expect(living).toContainText("Would heat · it’s off");
+  await expect(living).toContainText("HZT: would heat");
   await expect(living).toContainText("Living room radiator");
-  await expect(living).toContainText("Standby");
+  await expect(living).toContainText("HZT: standby");
 });
 
 test("fan and swing stay the user's, sent to the unit itself", async ({
@@ -112,11 +112,11 @@ test("a locked-out unit says why", async ({ page }) => {
   await openCards(page, FIXTURES["locked-out"]);
 
   await expect(card(page, "Living room")).toContainText(
-    "Locked out · below −15 °C outdoor",
+    "HZT: locked out · below −15 °C outdoor",
   );
 });
 
-test("an off zone shows no band or reason, and can't change its target", async ({
+test("an off zone shows no band or reason, but its target can change", async ({
   page,
 }) => {
   await openCards(page, FIXTURES.house);
@@ -127,9 +127,8 @@ test("an off zone shows no band or reason, and can't change its target", async (
   ).toBeVisible();
   await expect(entryway).not.toContainText("Why:");
   await expect(entryway.getByRole("img")).toHaveCount(0);
-  await expect(
-    entryway.getByRole("button", { name: "Raise the target" }),
-  ).toBeDisabled();
+  await entryway.getByRole("button", { name: "Raise the target" }).click();
+  await expect(entryway).toContainText(/Target\s*18\.5/);
 });
 
 test("says so when its entity isn't a zone", async ({ page }) => {
@@ -172,4 +171,88 @@ test("changing the target moves its ticks, not the room", async ({ page }) => {
   await expect(living).toContainText(/Target\s*23\.0/);
 
   expect((await pin.boundingBox())?.x).toBe(before?.x);
+});
+
+function lastCall(page: Page, type: string) {
+  return page.evaluate(
+    (t) => window.hztCalls.filter((call) => call.type === t).at(-1),
+    type,
+  );
+}
+
+test("clicking the card opens the zone, as HA cards do", async ({ page }) => {
+  await openCards(page, FIXTURES["just-the-ac"]);
+
+  await card(page, "Living room").getByText("Room", { exact: true }).click();
+
+  expect(await lastCall(page, "more-info")).toEqual({
+    type: "more-info",
+    entityId: "climate.living_room",
+  });
+});
+
+test("the unit and the room sensor open their own entities", async ({
+  page,
+}) => {
+  await openCards(page, FIXTURES["just-the-ac"]);
+  const living = card(page, "Living room");
+
+  await living.getByRole("button", { name: "Hisense AC" }).click();
+  expect((await lastCall(page, "more-info"))?.entityId).toBe(
+    "climate.living_room_hisense_ac",
+  );
+
+  await living.getByRole("button", { name: "CO2 Monitor Temperature" }).click();
+  expect((await lastCall(page, "more-info"))?.entityId).toBe(
+    "sensor.co2_monitor_temperature",
+  );
+});
+
+test("controls don't also open the zone", async ({ page }) => {
+  await openCards(page, FIXTURES["just-the-ac"]);
+
+  await card(page, "Living room")
+    .getByRole("button", { name: "Raise the target" })
+    .click();
+
+  expect(await lastCall(page, "more-info")).toBeUndefined();
+});
+
+test("settings and the shadow note lead to the zone in Climate zones", async ({
+  page,
+}) => {
+  await openCards(page, FIXTURES["just-the-ac"]);
+  const living = card(page, "Living room");
+
+  await living.getByRole("link", { name: "Go live in Climate zones" }).click();
+  expect((await lastCall(page, "navigate"))?.path).toBe(
+    "/climate-zones?zone=living_room",
+  );
+
+  await living.getByRole("link", { name: "Living room settings" }).click();
+  expect((await lastCall(page, "navigate"))?.path).toBe(
+    "/climate-zones?zone=living_room",
+  );
+});
+
+test("a unit's row says what the device itself is doing", async ({ page }) => {
+  await openCards(page, FIXTURES.cooling);
+  const living = card(page, "Living room");
+
+  await expect(living).toContainText(
+    "Cooling · set 20 °C · reads 24 °C · compressor 46 Hz",
+  );
+  await expect(living).toContainText("HZT: cooling");
+  await expect(living.locator(".room.glow.cool")).toHaveCount(1);
+});
+
+test("no glow while nothing actually runs, even if HZT would", async ({
+  page,
+}) => {
+  await openCards(page, FIXTURES["just-the-ac"]);
+  const living = card(page, "Living room");
+
+  await expect(living).toContainText("Off · reads 24 °C");
+  await expect(living).not.toContainText("compressor");
+  await expect(living.locator(".room.glow")).toHaveCount(0);
 });
