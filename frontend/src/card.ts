@@ -464,7 +464,20 @@ export class HztZoneCard extends LitElement {
     event.preventDefault();
     // No focus: a pointer drag would leave the handle lit as focused
     // until a click elsewhere. Keyboard users reach it by Tab.
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    const handleElement = event.currentTarget as HTMLElement;
+    handleElement.setPointerCapture(event.pointerId);
+    // The drag ends however the pointer lets go: released anywhere in the
+    // window, cancelled, or its capture lost (some webviews deliver the
+    // release to none of the band's own elements).
+    const end = (e: PointerEvent) => {
+      window.removeEventListener("pointerup", end, true);
+      window.removeEventListener("pointercancel", end, true);
+      handleElement.removeEventListener("lostpointercapture", end);
+      this.endDrag(e);
+    };
+    window.addEventListener("pointerup", end, true);
+    window.addEventListener("pointercancel", end, true);
+    handleElement.addEventListener("lostpointercapture", end);
     const scale = this.scale(zone, settings);
     const { heatBelow, coolAbove } = bandEdges(settings.target, settings.band);
     const value = { target: settings.target, low: heatBelow, high: coolAbove }[
@@ -504,7 +517,8 @@ export class HztZoneCard extends LitElement {
     const drag = this.drag;
     const zone = this.zone;
     this.drag = undefined;
-    if (drag && zone && event.type === "pointerup") {
+    // Anything but a cancel keeps where the handle was let go.
+    if (drag && zone && event.type !== "pointercancel") {
       this.commit(zone, rounded(drag, partOf(drag.handle)));
     }
   }
@@ -807,8 +821,6 @@ export class HztZoneCard extends LitElement {
     return html`<div
       class="band ${this.drag ? "dragging" : ""}"
       @pointermove=${this.moveDrag}
-      @pointerup=${this.endDrag}
-      @pointercancel=${this.endDrag}
     >
       <div
         class="band-track"
@@ -1357,9 +1369,10 @@ export class HztZoneCard extends LitElement {
       position: absolute;
       top: 44px;
       right: 0;
-      z-index: 2;
-      min-width: 220px;
-      padding: 6px;
+      /* Above the band's handles, which sit on their own layers. */
+      z-index: 10;
+      min-width: 200px;
+      padding: 4px;
       display: flex;
       flex-direction: column;
       border-radius: 12px;
@@ -1369,16 +1382,16 @@ export class HztZoneCard extends LitElement {
     }
     .menu button {
       display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 16px;
-      min-height: 40px;
-      padding: 0 10px;
+      align-items: center;
+      height: 36px;
+      padding: 0 12px;
       border: 0;
       border-radius: 8px;
       background: none;
       font-size: 14px;
+      line-height: 1;
       text-align: left;
+      white-space: nowrap;
     }
     .menu button:hover,
     .menu button:focus-visible {
@@ -1386,10 +1399,11 @@ export class HztZoneCard extends LitElement {
       outline: none;
     }
     .menu-caption {
-      margin: 6px 10px 2px;
-      padding-top: 8px;
+      margin: 4px 12px 0;
+      padding: 8px 0 4px;
       border-top: 1px solid var(--hzt-border);
       font-size: 12px;
+      line-height: 1;
       color: var(--hzt-muted);
     }
     button.link {

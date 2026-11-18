@@ -247,6 +247,68 @@ test("the menu opens HA's views of the zone, straight at the part", async ({
   }
 });
 
+test("the menu sits above the band, item by item", async ({ page }) => {
+  // A wide band, so its upper edge runs under the open menu.
+  const fixture = FIXTURES["living-room"] ?? {};
+  await openCards(page, {
+    ...fixture,
+    states: (fixture.states ?? []).map((e) =>
+      e.entity_id === "climate.living_room"
+        ? { ...e, attributes: { ...e.attributes, idle_band: 5 } }
+        : e,
+    ),
+  });
+  const living = card(page, "Living room");
+  await living.getByRole("button", { name: "More for Living room" }).click();
+
+  for (const name of [
+    "Zone settings",
+    "History",
+    "Entity settings",
+    "Related",
+  ]) {
+    const item = living.getByRole("menuitem", { name });
+    const box = await item.boundingBox();
+    if (!box) {
+      throw new Error(`No ${name}`);
+    }
+    // What's under the item's middle is the item itself.
+    const top = await page.evaluate(
+      ([x, y]) => {
+        const root = document.querySelector("hzt-zone-card")?.shadowRoot;
+        return root?.elementFromPoint(x as number, y as number)?.textContent;
+      },
+      [box.x + box.width / 2, box.y + box.height / 2],
+    );
+    expect(top?.trim()).toBe(name);
+  }
+});
+
+test("a drag by a label ends when it's let go", async ({ page }) => {
+  await openCards(page, FIXTURES["living-room"]);
+  const living = card(page, "Living room");
+  const label = await living
+    .getByRole("slider", { name: "Heating starts below" })
+    .boundingBox();
+  if (!label) {
+    throw new Error("No label");
+  }
+  const y = label.y + label.height / 2;
+
+  await page.mouse.move(label.x + label.width / 2, y);
+  await page.mouse.down();
+  await page.mouse.move(label.x + label.width / 2 - 40, y, { steps: 4 });
+  await expect(living.locator(".band.dragging")).toHaveCount(1);
+  await page.mouse.up();
+
+  await expect(living.locator(".band.dragging")).toHaveCount(0);
+  // Moving the pointer afterwards changes nothing.
+  const before = await lastService(page);
+  await page.mouse.move(label.x - 120, y, { steps: 4 });
+  expect(await lastService(page)).toEqual(before);
+  await expect(living.locator(".band.dragging")).toHaveCount(0);
+});
+
 test("the menu closes on Escape or a click elsewhere", async ({ page }) => {
   await openCards(page, FIXTURES["just-the-ac"]);
   const living = card(page, "Living room");
