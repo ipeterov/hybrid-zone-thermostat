@@ -209,6 +209,26 @@ test("shows the last day against the band", async ({ page }) => {
   );
 });
 
+test("a wide temperature range still gets at most five axis labels", async ({
+  page,
+}) => {
+  // A room read from a hot AC coil: 62 °C now, about 23 °C earlier.
+  const fixture = FIXTURES["just-the-ac"] ?? {};
+  await openCards(page, {
+    ...fixture,
+    states: (fixture.states ?? []).map((e) =>
+      e.entity_id === "climate.living_room"
+        ? { ...e, attributes: { ...e.attributes, current_temperature: 62 } }
+        : e,
+    ),
+  });
+  const labels = card(page, "Living room").locator(".y-label");
+
+  await expect(labels.first()).toBeVisible();
+  expect(await labels.count()).toBeLessThanOrEqual(5);
+  expect(await labels.count()).toBeGreaterThanOrEqual(2);
+});
+
 test("each unit's lane shows when its device actually ran", async ({
   page,
 }) => {

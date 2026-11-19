@@ -1023,8 +1023,11 @@ export class HztZoneCard extends LitElement {
     const roomPath = monotonePath(
       smooth.map((p) => [x(p.time), y(p.room)] as const),
     );
-    // The temperature axis: whole degrees, a label every degree or two.
-    const every = high - low > 6 ? 2 : 1;
+    // The temperature axis: a whole-degree step from 1, 2, 5, 10, 20, the smallest that keeps
+    // the labels to five, whatever the range (a sensor on an AC's coil can
+    // span 50 °C in a day).
+    const every =
+      [1, 2, 5, 10, 20].find((step) => (high - low) / step <= 5) ?? 50;
     const ticks: number[] = [];
     for (let t = Math.ceil(low / every) * every; t <= high; t += every) {
       ticks.push(t);

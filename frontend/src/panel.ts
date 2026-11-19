@@ -607,6 +607,25 @@ export class HztPanel extends LitElement {
     </div>`;
   }
 
+  // A sensor on one of the room's own units reads that unit (an AC's coil
+  // or air intake), not the room: running the unit moves its reading, and
+  // HZT chases its own tail.
+  private sensorWarning(config: HouseConfig, zone: Zone, sensor: string) {
+    const device = this.hass?.entities?.[sensor]?.device_id;
+    const owner = device
+      ? unitsOf(config, zone.id).find(
+          (u) => this.hass?.entities?.[u.entity_id]?.device_id === device,
+        )
+      : undefined;
+    return owner
+      ? html`<small class="warn"
+          >This sensor is part of ${owner.name}, so it reads the unit (its coil
+          or the air it takes in), not the room. Running ${owner.name} moves
+          it, and HZT would chase it. Use a sensor elsewhere in the room.</small
+        >`
+      : nothing;
+  }
+
   private setSensor(config: HouseConfig, zone: Zone, event: Event) {
     this.save(
       updateZone(config, zone.id, {
@@ -626,7 +645,7 @@ export class HztPanel extends LitElement {
         </select>
         ${
           zone.room_sensor
-            ? nothing
+            ? this.sensorWarning(config, zone, zone.room_sensor)
             : html`<small class="warn"
               >Without one, HZT can’t tell how warm the room is and keeps every
               unit off.</small
@@ -1247,8 +1266,15 @@ export class HztPanel extends LitElement {
   }
 
   private temperatureOptions(selected: string | null, none: string) {
+    // Not a device's diagnostics (a chip's or a coil's temperature), unless
+    // it's the one picked, so a choice already made still shows.
     const sensors = Object.values(this.hass?.states ?? {})
-      .filter(isTemperatureSensor)
+      .filter(
+        (entity) =>
+          isTemperatureSensor(entity) &&
+          (entity.entity_id === selected ||
+            !this.hass?.entities?.[entity.entity_id]?.entity_category),
+      )
       .sort((a, b) => a.entity_id.localeCompare(b.entity_id));
     return html`
       <option value="" ?selected=${selected === null}>${none}</option>

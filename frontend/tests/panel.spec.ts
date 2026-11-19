@@ -150,11 +150,13 @@ test("a new room offers only temperature sensors, with their readings", async ({
   });
 
   const sensor = zone(page, "Living room").getByLabel("Reads the room from");
+  // Not a device's diagnostics (the AC's chip temperature).
   await expect(sensor.locator("option")).toHaveText([
     "Choose a sensor",
     "Bedroom temperature · 19.8 °C",
     "CO2 Monitor Temperature · 21.4 °C",
     "Entryway temperature · 16.1 °C",
+    "Hisense AC Indoor coil temperature · 48.0 °C",
     "Outdoor temperature · 7.2 °C",
   ]);
   await sensor.selectOption("sensor.co2_monitor_temperature");
@@ -162,6 +164,33 @@ test("a new room offers only temperature sensors, with their readings", async ({
   await expect
     .poll(async () => (await lastSaved(page))?.zones[0]?.room_sensor)
     .toBe("sensor.co2_monitor_temperature");
+});
+
+test("a room read by its own unit's sensor gets a warning", async ({
+  page,
+}) => {
+  await open(page, {
+    config: {
+      ...LIVING_ROOM,
+      zones: LIVING_ROOM.zones.map((z) => ({
+        ...z,
+        room_sensor: "sensor.living_room_hisense_ac_indoor_coil_temperature",
+      })),
+    },
+    states: DEVICES,
+  });
+
+  await expect(zone(page, "Living room")).toContainText(
+    "This sensor is part of Hisense AC, so it reads the unit",
+  );
+});
+
+test("a room read by a sensor elsewhere gets no warning", async ({ page }) => {
+  await open(page, FIXTURES["living-room"]);
+
+  await expect(zone(page, "Living room")).not.toContainText(
+    "This sensor is part of",
+  );
 });
 
 test("each room says what it's doing, and why", async ({ page }) => {

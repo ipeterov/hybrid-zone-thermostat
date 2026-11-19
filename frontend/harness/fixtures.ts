@@ -13,6 +13,7 @@ export interface Fixture {
 // Entity categories (a device's settings), as hass.entities has them.
 export const CATEGORY_OF: Record<string, string> = {
   "switch.heater_plug_network_led": "config",
+  "sensor.hisense_ac_chip_temperature": "diagnostic",
 };
 
 // Areas, as hass.entities / hass.areas have them.
@@ -27,6 +28,8 @@ export const AREAS: Record<string, { name: string }> = {
 export const DEVICE_OF: Record<string, string> = {
   "climate.living_room_hisense_ac": "hisense",
   "sensor.living_room_hisense_ac_compressor_frequency": "hisense",
+  "sensor.living_room_hisense_ac_indoor_coil_temperature": "hisense",
+  "sensor.hisense_ac_chip_temperature": "hisense",
 };
 
 function temperature(id: string, name: string, value: string): HassEntity {
@@ -140,6 +143,18 @@ export const DEVICES: HassEntity[] = [
   temperature("sensor.outdoor_temperature", "Outdoor temperature", "7.2"),
   temperature("sensor.bedroom_temperature", "Bedroom temperature", "19.8"),
   temperature("sensor.entryway_temperature", "Entryway temperature", "16.1"),
+  // An AC's own sensors: its coil (no category, as ESPHome leaves it) and
+  // its chip (diagnostic). Neither reads the room.
+  temperature(
+    "sensor.living_room_hisense_ac_indoor_coil_temperature",
+    "Hisense AC Indoor coil temperature",
+    "48.0",
+  ),
+  temperature(
+    "sensor.hisense_ac_chip_temperature",
+    "Hisense AC Chip temperature",
+    "41.0",
+  ),
   {
     entity_id: "sensor.co2_monitor_co2",
     state: "640",
