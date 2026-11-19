@@ -238,11 +238,14 @@ class Engine:
             if unit is None:
                 continue
             status = self.unit_status.setdefault(unit_id, UnitStatus())
-            if not status.available:
-                # HA can't reach it: nothing to hold on, and its rest
-                # starts now.
+            if not status.available or decision.state is ZoneState.OFF:
+                # HA can't reach it, or the person turned the zone off: an
+                # off they asked for wins over the minimum run (the unit's
+                # own firmware still guards its compressor). Its rest
+                # starts now, so a quick on again still waits.
                 self.protection.stopped(unit_id, now)
                 status.note = None
+                status.duty = None
                 continue
             limits = Limits(
                 min_run=timedelta(minutes=unit["min_run"]),

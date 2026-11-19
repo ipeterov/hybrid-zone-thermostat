@@ -71,6 +71,26 @@ async def test_a_live_zone_drives_the_ac_by_setpoint_offset(
     assert hass.states.get(CLIMATE).attributes["hvac_action"] == "heating"
 
 
+@pytest.mark.parametrize("house_config", [live(LIVING_ROOM)])
+async def test_turning_the_zone_off_stops_its_units_at_once(
+    hass: HomeAssistant, entry: MockConfigEntry, calls: list[ServiceCall]
+):
+    await give_ac_attributes(hass)
+    assert any(call.data.get("hvac_mode") == "heat" for call in calls)
+    hass.states.async_set(AC, "heat", AC_ATTRIBUTES)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    # Seconds after it started: well inside its minimum run.
+    before = len(calls)
+    await entry.runtime_data.async_update_zone("living_room", enabled=False)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    sent = [(call.service, call.data) for call in calls[before:]]
+    assert ("set_hvac_mode", {ATTR_ENTITY_ID: AC, "hvac_mode": "off"}) in sent
+    reason = hass.states.get(CLIMATE).attributes["reason"]
+    assert "held on" not in reason
+
+
 async def test_a_shadow_zone_sends_nothing(
     hass: HomeAssistant, entry: MockConfigEntry, calls: list[ServiceCall]
 ):
