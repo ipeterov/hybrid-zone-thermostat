@@ -205,6 +205,21 @@ async def test_saving_a_new_zone_creates_its_entities(
             },
             "another zone's unit",
         ),
+        (
+            {
+                "room_units": [
+                    {
+                        "id": "plug",
+                        "name": "Plug",
+                        "entity_id": "switch.plug",
+                        "zone_id": "living_room",
+                        "can_heat": True,
+                        "can_cool": True,
+                    }
+                ]
+            },
+            "heat or cool, not both",
+        ),
     ],
 )
 async def test_an_inconsistent_config_is_refused(

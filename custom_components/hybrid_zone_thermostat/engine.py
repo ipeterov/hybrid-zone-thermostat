@@ -46,7 +46,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import DOMAIN, SWITCH_DOMAINS
 from .control import (
     Controller,
     HouseDecision,
@@ -59,12 +59,7 @@ from .control import (
 )
 from .control.lockouts import Lockouts
 from .control.protection import Limits, Protection
-from .drivers import (
-    SWITCH_DOMAINS,
-    ClimateDriver,
-    SwitchDriver,
-    on_minutes,
-)
+from .drivers import ClimateDriver, SwitchDriver, on_minutes
 from .storage import ConfigStore, RoomUnitConfig, ZoneConfig
 
 _LOGGER = logging.getLogger(__name__)

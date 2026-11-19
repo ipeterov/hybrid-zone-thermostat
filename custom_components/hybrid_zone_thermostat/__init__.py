@@ -95,7 +95,9 @@ async def async_unload_entry(
     return True
 
 
-async def async_remove_entry(hass: HomeAssistant, entry: HztConfigEntry) -> None:
+async def async_remove_entry(
+    hass: HomeAssistant, entry: HztConfigEntry
+) -> None:
     """The integration is gone: so are its panel and card."""
     frontend.async_remove_panel(hass, PANEL_URL_PATH)
     if card_url := hass.data.pop(f"{DOMAIN}_card_url", None):

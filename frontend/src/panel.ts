@@ -1,4 +1,4 @@
-import { html, LitElement, nothing, svg } from "lit";
+import { html, LitElement, nothing } from "lit";
 
 import {
   addRoomUnit,
@@ -24,17 +24,19 @@ import {
 import { panelStyles } from "./panel-styles";
 import { bandEdges, tenths } from "./zone";
 
-// Map geometry, in px: a column each for central units, room units and
-// zones, a row per room unit (docs/design/panel-system-map.html). Columns
-// share the width the map has; below MAP_THREE_COLUMNS the central-units
-// column, only a hint for now, is dropped.
-const MAP_TOP = 32;
-const MAP_ROW = 75;
-const MAP_NODE = 56;
-const MAP_MIN_WIDTH = 280;
-const MAP_THREE_COLUMNS = 640;
+// The Climate zones page (the canvas's "Settings, zones first"): the house
+// is the page, each zone one card, each room unit a section of its zone.
+// Nothing has a separate "create" screen: an add pill makes the thing in
+// place, in an empty state that says what it needs, and filled in it's
+// the same card's edit view. Settings off by default wait behind pills
+// named for why someone would want them; a set one is a panel with ×.
 
-// Must match the backend's control/protection.py.
+// Must match the backend's defaults (storage.py) and control/protection.py.
+const DEFAULT_MIN_RUN = 6;
+const DEFAULT_MIN_REST = 4;
+const DEFAULT_CYCLE = 10;
+const DEFAULT_HEAT_LOCKOUT = -15;
+const DEFAULT_COOL_LOCKOUT = 16;
 const CHANGEOVER_MINUTES = 10;
 
 const HEAT_LOCKOUTS = [-25, -20, -15, -10, -5, 0, 5, 10];
@@ -46,44 +48,7 @@ const CYCLES: [number, string][] = [
   [30, "30 min (slow heat, underfloor)"],
   [60, "60 min"],
 ];
-
-interface Column {
-  x: number;
-  w: number;
-}
-
-interface Geometry {
-  width: number;
-  central?: Column;
-  unit: Column;
-  zone: Column;
-}
-
-function geometry(available: number): Geometry {
-  const width = Math.max(available, MAP_MIN_WIDTH);
-  const three = width >= MAP_THREE_COLUMNS;
-  const gap = three ? 80 : 36;
-  const count = three ? 3 : 2;
-  const w = Math.min(240, (width - gap * (count - 1)) / count);
-  const columns = Array.from({ length: count }, (_, i) => ({
-    x: i * (w + gap),
-    w,
-  }));
-  return three
-    ? {
-        width,
-        central: columns[0],
-        unit: columns[1] as Column,
-        zone: columns[2] as Column,
-      }
-    : { width, unit: columns[0] as Column, zone: columns[1] as Column };
-}
-
-type Aside =
-  | { kind: "zone" }
-  | { kind: "new-zone" }
-  | { kind: "new-unit" }
-  | { kind: "unit"; unitId: string };
+const BANDS = [0.5, 1, 1.5, 2, 2.5, 3];
 
 interface Demand {
   mode: "heat" | "cool" | null;
@@ -107,21 +72,13 @@ interface ZoneStatus {
 }
 
 const STATE_WORDS: Record<string, [shadow: string, live: string]> = {
-  heating: ["would heat", "heating"],
-  cooling: ["would cool", "cooling"],
-  idle: ["idle", "idle"],
-  off: ["off", "off"],
-  fault: ["no room temperature", "no room temperature"],
-  manual: ["manual", "manual"],
+  heating: ["Would heat", "Heating"],
+  cooling: ["Would cool", "Cooling"],
+  idle: ["Idle", "Idle"],
+  off: ["Off", "Off"],
+  fault: ["No room temperature", "No room temperature"],
+  manual: ["Manual", "Manual"],
 };
-
-function stateWord(status: ZoneStatus): string | undefined {
-  if (!status.state) {
-    return undefined;
-  }
-  const words = STATE_WORDS[status.state];
-  return words ? words[status.shadow ? 0 : 1] : status.state;
-}
 
 function isTemperatureSensor(entity: HassEntity): boolean {
   return (
@@ -139,8 +96,22 @@ function wholeDegrees(value: number): string {
   return `${String(value).replace("-", "−")} °C`;
 }
 
-// The Climate zones sidebar page. HA sets `hass` (and `narrow`, `panel`)
-// on it, and sets `hass` again on every state change.
+// Relays and plugs: switches, and lights, as many plugs are exposed.
+function isSwitchEntity(entityId: string): boolean {
+  return ["switch.", "light.", "input_boolean."].some((prefix) =>
+    entityId.startsWith(prefix),
+  );
+}
+
+// Panels shown though their setting is still at its default: opened from
+// their pill, kept open until saved or closed.
+type Opened =
+  | "outdoor"
+  | `heat-lockout:${string}`
+  | `cool-lockout:${string}`
+  | `rest:${string}`
+  | `cycle:${string}`;
+
 export class HztPanel extends LitElement {
   static properties = {
     hass: { attribute: false },
@@ -148,10 +119,11 @@ export class HztPanel extends LitElement {
     config: { state: true },
     error: { state: true },
     saveError: { state: true },
-    selected: { state: true },
-    aside: { state: true },
-    mapWidth: { state: true },
+    opened: { state: true },
+    addingUnit: { state: true },
+    addingZone: { state: true },
     confirmLive: { state: true },
+    focusZone: { state: true },
   };
 
   static styles = panelStyles;
@@ -161,43 +133,25 @@ export class HztPanel extends LitElement {
   config?: HouseConfig;
   error?: string;
   saveError?: string;
-  selected?: string;
-  aside: Aside = { kind: "zone" };
-  mapWidth = 860;
-  confirmLive = false;
+  opened = new Set<Opened>();
+  // The zone a new room unit is being added to, if any.
+  addingUnit?: string;
+  addingZone = false;
+  // The zone whose "go live" is waiting for a yes.
+  confirmLive?: string;
+  // ?zone=: the zone the dashboard card's link asked for.
+  focusZone?: string;
 
   private loading = false;
-  private observed?: Element;
-  private readonly resizeObserver = new ResizeObserver((entries) => {
-    const width = entries[0]?.contentRect.width;
-    if (width && Math.abs(width - this.mapWidth) > 1) {
-      this.mapWidth = width;
-    }
-  });
+  private scrolledTo?: string;
 
   connectedCallback(): void {
     super.connectedCallback();
-    // The zone card's settings link opens its zone: /climate-zones?zone=…
-    const zone = new URLSearchParams(location.search).get("zone");
-    if (zone) {
-      this.selected = zone;
-      this.aside = { kind: "zone" };
-    }
-  }
-
-  disconnectedCallback(): void {
-    super.disconnectedCallback();
-    this.resizeObserver.disconnect();
-    this.observed = undefined;
+    this.focusZone =
+      new URLSearchParams(location.search).get("zone") ?? undefined;
   }
 
   protected updated(): void {
-    const mapBox = this.renderRoot.querySelector(".map-scroll");
-    if (mapBox && mapBox !== this.observed) {
-      this.resizeObserver.disconnect();
-      this.resizeObserver.observe(mapBox);
-      this.observed = mapBox;
-    }
     if (this.hass && !this.config && !this.loading && !this.error) {
       this.loading = true;
       this.hass
@@ -211,6 +165,15 @@ export class HztPanel extends LitElement {
         .finally(() => {
           this.loading = false;
         });
+    }
+    if (this.focusZone && this.scrolledTo !== this.focusZone) {
+      const card = this.renderRoot.querySelector(
+        `[data-zone="${CSS.escape(this.focusZone)}"]`,
+      );
+      if (card) {
+        this.scrolledTo = this.focusZone;
+        card.scrollIntoView({ block: "start" });
+      }
     }
   }
 
@@ -231,15 +194,14 @@ export class HztPanel extends LitElement {
     }
   }
 
-  private show(aside: Aside): void {
-    this.aside = aside;
-    this.confirmLive = false;
+  private open(key: Opened) {
+    this.opened = new Set([...this.opened, key]);
   }
 
-  private selectedZone(config: HouseConfig): Zone | undefined {
-    return (
-      config.zones.find((zone) => zone.id === this.selected) ?? config.zones[0]
-    );
+  private close(key: Opened) {
+    const next = new Set(this.opened);
+    next.delete(key);
+    this.opened = next;
   }
 
   private status(zoneId: string): ZoneStatus {
@@ -275,6 +237,8 @@ export class HztPanel extends LitElement {
     return Number.isFinite(value) ? value : undefined;
   }
 
+  // ---- The page ----------------------------------------------------------
+
   protected render() {
     return html`
       <header class="topbar">
@@ -305,510 +269,273 @@ export class HztPanel extends LitElement {
 
   private renderBody() {
     if (this.error) {
-      return html`<div class="page">
+      return html`<main class="page">
         <p class="alert" role="alert">Couldn’t load the zones: ${this.error}</p>
-      </div>`;
+      </main>`;
     }
     if (!(this.config && this.hass)) {
       return nothing;
     }
     const config = this.config;
-    const zone = this.selectedZone(config);
-    return html`<div class="page">
+    return html`<main class="page">
       ${
         this.saveError
-          ? html`<p class="alert wide" role="alert">
-            Couldn’t save: ${this.saveError}
+          ? html`<p class="alert" role="alert">Couldn’t save: ${this.saveError}</p>`
+          : nothing
+      }
+      ${this.renderHouse(config)}
+      ${config.zones.map((zone) => this.renderZone(config, zone))}
+      ${this.renderAddZone(config)}
+    </main>`;
+  }
+
+  // ---- The house: what every zone shares --------------------------------
+
+  private renderHouse(config: HouseConfig) {
+    const sensor = config.house.outdoor_sensor;
+    const showOutdoor = sensor !== null || this.opened.has("outdoor");
+    return html`<section class="house" aria-labelledby="house-title">
+      <h2 id="house-title">Your house</h2>
+      ${
+        config.zones.length === 0
+          ? html`<p class="lead">
+            HZT keeps each room within a band around its target, using
+            whatever heats and cools it: ACs, radiators, heaters on smart
+            plugs. Start with one room.
           </p>`
           : nothing
       }
-      <div class="main">
-        ${this.renderMapCard(config, zone)} ${this.renderOutdoor(config)}
-      </div>
-      <aside class="card side">${this.renderAside(config, zone)}</aside>
-    </div>`;
-  }
-
-  // ---- The system map ------------------------------------------------
-
-  private renderMapCard(config: HouseConfig, selected: Zone | undefined) {
-    return html`<section class="card">
-      <div class="card-head">
-        <h2>What heats and cools what</h2>
-        <button
-          class="pill"
-          ?disabled=${!selected}
-          @click=${() => this.show({ kind: "new-unit" })}
-        >
-          + Room unit
-        </button>
-        <button class="pill" @click=${() => this.show({ kind: "new-zone" })}>
-          + Zone
-        </button>
-      </div>
+      ${showOutdoor ? this.renderOutdoor(config) : nothing}
       ${
-        config.zones.length === 0
-          ? html`<p class="empty">
-            No zones yet. A zone is what has one target temperature: a room,
-            or an open-plan space.
-          </p>`
-          : this.renderMap(config, selected)
+        // The house's extras are for its units: none before there's a room.
+        showOutdoor || config.zones.length === 0
+          ? nothing
+          : html`<div class="pills">
+            ${this.pill("Use the outdoor temperature", () => this.open("outdoor"))}
+          </div>`
       }
     </section>`;
-  }
-
-  private renderMap(config: HouseConfig, selected: Zone | undefined) {
-    const g = geometry(this.mapWidth);
-    // Rows: each zone's units in order; a zone without units takes a row.
-    const unitY = new Map<string, number>();
-    const zoneY = new Map<string, number>();
-    let row = 0;
-    for (const zone of config.zones) {
-      const units = unitsOf(config, zone.id);
-      const first = row;
-      for (const unit of units) {
-        unitY.set(unit.id, MAP_TOP + row * MAP_ROW);
-        row++;
-      }
-      if (units.length === 0) {
-        row++;
-      }
-      const middle = (first + Math.max(row - 1, first)) / 2;
-      zoneY.set(zone.id, MAP_TOP + middle * MAP_ROW);
-    }
-    const height = MAP_TOP + row * MAP_ROW;
-
-    const lines = config.room_units.map((unit) => {
-      const from = (unitY.get(unit.id) ?? 0) + MAP_NODE / 2;
-      const to = (zoneY.get(unit.zone_id) ?? 0) + MAP_NODE / 2;
-      const x1 = g.unit.x + g.unit.w;
-      const x2 = g.zone.x;
-      const mid = (x1 + x2) / 2;
-      const mode = this.status(unit.zone_id).demands[unit.id]?.mode;
-      return svg`<path
-        d="M${x1} ${from} C${mid} ${from} ${mid} ${to} ${x2} ${to}"
-        class="line ${mode ?? ""}"
-      ></path>`;
-    });
-
-    return html`<div class="map-scroll">
-      <div class="map" style="width:${g.width}px;height:${height}px">
-        ${
-          g.central
-            ? html`<span class="col-label" style="left:${g.central.x}px"
-              >Central units</span
-            >`
-            : nothing
-        }
-        <span class="col-label" style="left:${g.unit.x}px">Room units</span>
-        <span class="col-label" style="left:${g.zone.x}px">Zones</span>
-        <svg
-          width=${g.width}
-          height=${height}
-          class="lines"
-          aria-hidden="true"
-        >
-          ${lines}
-        </svg>
-        ${
-          g.central
-            ? html`<p
-              class="node hint"
-              style="left:${g.central.x}px;top:${MAP_TOP}px;width:${g.central.w}px"
-            >
-              Boilers and multi-split outdoor units will go here.
-            </p>`
-            : nothing
-        }
-        ${config.room_units.map((unit) =>
-          this.renderUnitNode(config, unit, g.unit, unitY.get(unit.id) ?? 0),
-        )}
-        ${config.zones.map((zone) =>
-          this.renderZoneNode(
-            zone,
-            g.zone,
-            zoneY.get(zone.id) ?? 0,
-            zone === selected && this.aside.kind === "zone",
-          ),
-        )}
-      </div>
-    </div>`;
-  }
-
-  private unitWord(unit: RoomUnit): string {
-    const status = this.status(unit.zone_id);
-    const demand = status.demands[unit.id];
-    const unitStatus = status.units[unit.id];
-    const available =
-      this.hass?.states[unit.entity_id]?.state !== "unavailable";
-    if (!available) {
-      return "unavailable";
-    }
-    if (demand?.mode) {
-      const verb = demand.mode === "heat" ? "heat" : "cool";
-      return status.shadow ? `would ${verb}` : `${verb}ing`;
-    }
-    if (
-      (status.state === "heating" && unitStatus?.heat_locked) ||
-      (status.state === "cooling" && unitStatus?.cool_locked)
-    ) {
-      return "locked out";
-    }
-    if (status.state === "heating") {
-      return unit.can_heat ? "standby" : "idle, cools only";
-    }
-    if (status.state === "cooling") {
-      return unit.can_cool ? "standby" : "idle, heats only";
-    }
-    return status.state === "manual" ? "manual" : "idle";
-  }
-
-  private renderUnitNode(
-    config: HouseConfig,
-    unit: RoomUnit,
-    column: Column,
-    top: number,
-  ) {
-    const demand = this.status(unit.zone_id).demands[unit.id];
-    // The rank in the order for what the zone is doing; none when idle.
-    const zone = config.zones.find((z) => z.id === unit.zone_id);
-    const state = this.status(unit.zone_id).state;
-    const order =
-      state === "heating"
-        ? zone?.heating_order
-        : state === "cooling"
-          ? zone?.cooling_order
-          : undefined;
-    const position = order ? order.indexOf(unit.id) + 1 : 0;
-    const word = this.unitWord(unit);
-    const selected =
-      this.aside.kind === "unit" && this.aside.unitId === unit.id;
-    return html`<button
-      class="node unit ${demand?.mode ?? ""} ${
-        word === "unavailable" || word === "locked out" ? "gone" : ""
-      } ${selected ? "selected" : ""}"
-      style="left:${column.x}px;top:${top}px;width:${column.w}px"
-      aria-pressed=${selected ? "true" : "false"}
-      @click=${() => {
-        this.selected = unit.zone_id;
-        this.show({ kind: "unit", unitId: unit.id });
-      }}
-    >
-      <span class="node-name">${unit.name}</span>
-      <span class="node-sub"
-        >${capitalize(word)}${position ? ` · #${position}` : ""}</span
-      >
-    </button>`;
-  }
-
-  private renderZoneNode(
-    zone: Zone,
-    column: Column,
-    top: number,
-    selected: boolean,
-  ) {
-    const status = this.status(zone.id);
-    const room = status.room === undefined ? "–" : status.room.toFixed(1);
-    const word = stateWord(status);
-    return html`<button
-      class="node zone ${selected ? "selected" : ""}"
-      style="left:${column.x}px;top:${top}px;width:${column.w}px"
-      aria-pressed=${selected ? "true" : "false"}
-      @click=${() => {
-        this.selected = zone.id;
-        this.show({ kind: "zone" });
-      }}
-    >
-      <span class="node-name">${zone.name}</span>
-      <span class="node-sub"
-        >${room} → ${zone.target.toFixed(1)}${word ? ` · ${word}` : ""}</span
-      >
-    </button>`;
-  }
-
-  // ---- Outdoor temperature and lockouts --------------------------------
-
-  private temperatureOptions(selected: string | null) {
-    const sensors = Object.values(this.hass?.states ?? {})
-      .filter(isTemperatureSensor)
-      .sort((a, b) => a.entity_id.localeCompare(b.entity_id));
-    return html`
-      <option value="" ?selected=${selected === null}>None</option>
-      ${sensors.map(
-        (entity) => html`<option
-          value=${entity.entity_id}
-          ?selected=${entity.entity_id === selected}
-        >
-          ${friendlyName(this.hass as Hass, entity.entity_id)}
-        </option>`,
-      )}
-    `;
   }
 
   private renderOutdoor(config: HouseConfig) {
-    const outdoor = this.outdoor(config);
     const sensor = config.house.outdoor_sensor;
-    return html`<section class="card" aria-labelledby="outdoor-title">
-      <h2 id="outdoor-title">Outdoor temperature</h2>
-      <label class="field narrow">
-        Sensor
-        <select
-          @change=${(event: Event) =>
-            this.save(
-              setOutdoorSensor(config, selectValue(event.target) || null),
-            )}
-        >
-          ${this.temperatureOptions(sensor)}
-        </select>
-      </label>
-      ${
-        sensor === null
-          ? html`<p class="small">
-            Used for lockouts: below a temperature you choose, a unit stops
-            heating or cooling and the next one takes over. Without a sensor,
-            lockouts are off and every unit may run whatever the weather.
-          </p>`
-          : this.renderLockoutChart(config, outdoor)
-      }
-    </section>`;
-  }
-
-  private renderLockoutChart(config: HouseConfig, outdoor: number | undefined) {
-    const units = config.room_units;
-    const thresholds = units.flatMap((u) =>
-      [u.heat_lockout_below, u.cool_lockout_below].filter(
-        (t): t is number => t !== null,
-      ),
+    const limited = config.room_units.filter(
+      (u) =>
+        (u.can_heat && u.heat_lockout_below !== null) ||
+        (u.can_cool && u.cool_lockout_below !== null),
     );
-    const low = Math.min(-20, ...thresholds.map((t) => t - 5));
-    const high = 35;
-    const at = (t: number) =>
-      `${(((Math.min(Math.max(t, low), high) - low) / (high - low)) * 100).toFixed(2)}%`;
-    const lockedNow = units.filter((u) => {
-      const s = this.status(u.zone_id).units[u.id];
-      return s?.heat_locked || s?.cool_locked;
-    });
-    const anyLockout = thresholds.length > 0;
-    let summary: string;
-    if (outdoor === undefined) {
-      summary =
-        "The sensor has no reading, so lockouts are off until it reports again.";
-    } else if (lockedNow.length > 0) {
-      summary = lockedNow
-        .map((u) => {
-          const s = this.status(u.zone_id).units[u.id];
-          const what = s?.heat_locked ? "heat" : "cool";
-          return `${u.name} can’t ${what} now.`;
-        })
-        .join(" ");
-    } else if (anyLockout) {
-      summary = "Every unit may run at this temperature.";
+    let upshot: string;
+    if (sensor === null) {
+      upshot = "Pick the sensor that reads the outdoor temperature.";
+    } else if (limited.length === 0) {
+      upshot =
+        "Lets a unit stop heating or cooling in some weather. No unit uses it yet.";
     } else {
-      summary =
-        "No unit has a lockout, so every unit may run whatever the weather. Select a room unit on the map to set one.";
+      upshot = `Lets a unit stop heating or cooling in some weather. ${limited
+        .map((u) => this.lockoutSummary(u))
+        .join(" ")}`;
     }
-    return html`
-      <p class="small">
-        ${outdoor === undefined ? nothing : html`It’s ${degrees(outdoor)} now. `}${summary}
-      </p>
-      ${
-        units.length === 0
-          ? nothing
-          : html`<div class="chart" role="img" aria-label="Which units may run at which outdoor temperature">
-            ${units.map(
-              (u) => html`<span class="chart-label">${u.name}</span>
-                <span class="chart-track">
-                  ${
-                    u.can_heat
-                      ? html`<span
-                        class="bar heat"
-                        style="left:${at(u.heat_lockout_below ?? low)};right:0"
-                      ></span>`
-                      : nothing
-                  }
-                  ${
-                    u.can_cool
-                      ? html`<span
-                        class="bar cool"
-                        style="left:${at(u.cool_lockout_below ?? low)};right:0"
-                      ></span>`
-                      : nothing
-                  }
-                  ${
-                    outdoor === undefined
-                      ? nothing
-                      : html`<span class="now" style="left:${at(outdoor)}"></span>`
-                  }
-                </span>`,
-            )}
-            <span></span>
-            <span class="chart-axis">
-              <span style="left:0">${wholeDegrees(low)}</span>
-              <span style="left:${at(0)}">0 °C</span>
-              <span style="right:0">${wholeDegrees(high)}</span>
-            </span>
-          </div>
-          <p class="legend">
-            <span><span class="swatch heat"></span>may heat</span>
-            <span><span class="swatch cool"></span>may cool</span>
-            <span><span class="swatch now"></span>now</span>
-          </p>`
-      }
-    `;
+    return this.extra(
+      "Use the outdoor temperature",
+      () => {
+        this.close("outdoor");
+        if (sensor !== null) {
+          // Lockouts can't work without it: say so rather than keep stale
+          // limits that silently stop applying.
+          this.save(setOutdoorSensor(config, null));
+        }
+      },
+      html`<label class="inline">
+          Read from
+          <select
+            @change=${(event: Event) =>
+              this.save(
+                setOutdoorSensor(config, selectValue(event.target) || null),
+              ).then(() => this.close("outdoor"))}
+          >
+            ${this.temperatureOptions(sensor, "Choose a sensor")}
+          </select>
+        </label>
+        <p class="small">
+          ${upshot}${
+            sensor !== null && limited.length > 0
+              ? " Without it, those limits stop applying."
+              : ""
+          }
+        </p>`,
+    );
   }
 
-  // ---- The side panel --------------------------------------------------
-
-  private renderAside(config: HouseConfig, zone: Zone | undefined) {
-    if (this.aside.kind === "new-zone" || !zone) {
-      return this.renderNewZone(config, Boolean(zone));
+  private lockoutSummary(unit: RoomUnit): string {
+    const parts: string[] = [];
+    if (unit.can_heat && unit.heat_lockout_below !== null) {
+      parts.push(
+        `stops heating below ${wholeDegrees(unit.heat_lockout_below)}`,
+      );
     }
-    if (this.aside.kind === "new-unit") {
-      return this.renderNewUnit(config, zone);
+    if (unit.can_cool && unit.cool_lockout_below !== null) {
+      parts.push(
+        `stops cooling below ${wholeDegrees(unit.cool_lockout_below)}`,
+      );
     }
-    if (this.aside.kind === "unit") {
-      const unitId = this.aside.unitId;
-      const unit = config.room_units.find((u) => u.id === unitId);
-      if (unit) {
-        return this.renderUnit(config, unit);
-      }
-    }
-    return this.renderZoneDetails(config, zone);
+    return `${unit.name} ${parts.join(" and ")}.`;
   }
 
-  private renderZoneDetails(config: HouseConfig, zone: Zone) {
-    const status = this.status(zone.id);
-    const word = stateWord(status);
+  // ---- Zones -------------------------------------------------------------
+
+  private renderAddZone(config: HouseConfig) {
+    if (this.addingZone) {
+      const add = async (event: Event) => {
+        event.preventDefault();
+        const data = new FormData(event.target as HTMLFormElement);
+        const name = String(data.get("name") ?? "").trim();
+        if (!name) {
+          return;
+        }
+        const next = addZone(config, name, null);
+        if (await this.save(next)) {
+          this.addingZone = false;
+        }
+      };
+      return html`<form class="card new" @submit=${add}>
+        <label class="field">
+          What’s the room called?
+          <input name="name" required placeholder="Bedroom" autofocus />
+        </label>
+        <p class="small">
+          Anything with one target temperature: a room, or an open-plan space.
+        </p>
+        <div class="actions">
+          <button type="submit" class="primary">Add room</button>
+          <button
+            type="button"
+            class="text"
+            @click=${() => {
+              this.addingZone = false;
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </form>`;
+    }
+    return html`<div class="pills">
+      ${this.pill(
+        config.zones.length === 0 ? "Control a room" : "Control another room",
+        () => {
+          this.addingZone = true;
+        },
+      )}
+    </div>`;
+  }
+
+  private renderZone(config: HouseConfig, zone: Zone) {
     const units = unitsOf(config, zone.id);
-    const { heatBelow, coolAbove } = bandEdges(zone.target, zone.idle_band);
-    return html`<div class="side-head">
-        <span class="eyebrow">Zone</span>
-        <div class="title-row">
-          <h2 class="big">${zone.name}</h2>
-          ${word ? html`<span class="chip ${status.state}">${capitalize(word)}</span>` : nothing}
-        </div>
-      </div>
-      ${
-        status.reason
-          ? html`<p class="reason"><strong>Why:</strong> ${status.reason}</p>`
-          : nothing
-      }
-      ${this.renderLive(config, zone, units)}
-      <div class="facts">
-        <label class="fact full">
-          <span>Room sensor</span>
-          <select
-            @change=${(event: Event) =>
-              this.save(
-                updateZone(config, zone.id, {
-                  room_sensor: selectValue(event.target) || null,
-                }),
-              )}
-          >
-            ${this.temperatureOptions(zone.room_sensor)}
-          </select>
-          <small
-            >${
-              zone.room_sensor
-                ? "What the zone’s temperature is read from."
-                : "Without one, HZT can’t tell the room’s temperature and keeps every unit off."
-            }</small
-          >
-        </label>
-        <label class="fact">
-          <span>Idle band</span>
-          <select
-            @change=${(event: Event) =>
-              this.save(
-                updateZone(config, zone.id, {
-                  idle_band: Number(selectValue(event.target)),
-                }),
-              )}
-          >
-            ${[
-              // The card can set any band; it's listed among these.
-              ...new Set([0.5, 1, 1.5, 2, 2.5, 3, zone.idle_band]),
-            ]
-              .sort((a, b) => a - b)
-              .map(
-                (band) =>
-                  html`<option
-                  value=${band}
-                  ?selected=${band === zone.idle_band}
-                >
-                  ±${tenths(band / 2)} °C
-                </option>`,
-              )}
-          </select>
-          <small>Heats below ${tenths(heatBelow)}, cools above ${tenths(coolAbove)}</small>
-        </label>
-        <div class="fact">
-          <span>Target</span>
-          <strong>${zone.target.toFixed(1)} °C</strong>
-          <small>Set on its thermostat</small>
-        </div>
-      </div>
-
-      ${this.renderOrders(config, zone, units)}
-      <div class="side-actions">
-        <button class="pill" @click=${() => this.show({ kind: "new-unit" })}>
-          + Room unit
-        </button>
+    const status = this.status(zone.id);
+    const focused = this.focusZone === zone.id;
+    const empty = units.length === 0 && zone.room_sensor === null;
+    return html`<article
+      class="card zone ${focused ? "focused" : ""}"
+      data-zone=${zone.id}
+      aria-labelledby="zone-${zone.id}"
+    >
+      ${this.renderZoneHead(config, zone, units, status, empty)}
+      ${empty ? this.renderZoneEmpty(config, zone) : this.renderZoneRoom(config, zone)}
+      ${empty ? nothing : this.renderOrders(config, zone, units)}
+      ${units.map((unit) => this.renderUnit(config, zone, unit, units))}
+      ${this.addingUnit === zone.id ? this.renderAddUnit(config, zone) : nothing}
+      <div class="section foot">
+        ${
+          empty || this.addingUnit === zone.id
+            ? nothing
+            : this.pill(
+                units.length === 0
+                  ? "Add what heats or cools it"
+                  : units.length === 1
+                    ? "Help it with a second heater or cooler"
+                    : "Help it with another heater or cooler",
+                () => {
+                  this.addingUnit = zone.id;
+                },
+              )
+        }
         <button
-          class="text danger"
-          @click=${async () => {
-            if (await this.save(removeZone(config, zone.id))) {
-              this.selected = undefined;
-            }
-          }}
+          class="text quiet end"
+          @click=${() => this.save(removeZone(config, zone.id))}
         >
-          Remove zone
+          Remove room
         </button>
-      </div>`;
+      </div>
+    </article>`;
   }
 
-  private renderLive(config: HouseConfig, zone: Zone, units: RoomUnit[]) {
+  private renderZoneHead(
+    config: HouseConfig,
+    zone: Zone,
+    units: RoomUnit[],
+    status: ZoneStatus,
+    empty: boolean,
+  ) {
+    const words = status.state ? STATE_WORDS[status.state] : undefined;
+    const word = words ? words[status.shadow ? 0 : 1] : status.state;
+    const room = status.room === undefined ? "" : ` · ${degrees(status.room)}`;
+    return html`<div class="zone-head">
+      <div class="zone-title">
+        <h3 id="zone-${zone.id}">${zone.name}</h3>
+        <span class="small"
+          >${empty ? "Not set up yet" : `${word ?? "Starting"}${room}`}</span
+        >
+        ${
+          !empty && status.reason
+            ? html`<span class="small reason">${status.reason}</span>`
+            : nothing
+        }
+      </div>
+      ${empty ? nothing : this.renderMode(config, zone, units)}
+    </div>`;
+  }
+
+  // Live or shadow: what HZT does with this zone's units. Quiet, since it's
+  // set once; going live asks first.
+  private renderMode(config: HouseConfig, zone: Zone, units: RoomUnit[]) {
     const names = units.map((u) => u.name).join(" and ") || "its units";
     if (!zone.shadow) {
-      return html`<div class="mode live">
-        <p>
-          <strong>Live.</strong> HZT sets ${names}’s mode and setpoint. If
-          someone changes them by hand, HZT leaves the zone alone for two
-          hours.
-        </p>
+      return html`<p class="mode">
+        Live: HZT drives ${names} ·
         <button
-          class="pill"
+          class="text link"
           @click=${() => this.save(updateZone(config, zone.id, { shadow: true }))}
         >
-          Back to shadow mode
+          Use shadow mode
         </button>
-      </div>`;
+      </p>`;
     }
-    if (this.confirmLive) {
-      return html`<div class="mode confirm">
+    if (this.confirmLive === zone.id) {
+      return html`<div class="mode confirm" role="group" aria-label="Go live">
         <p>
           <strong>Hand ${names} to HZT?</strong> It will set their mode and
           setpoint from now on. Turn off anything else that controls them
           first, such as another thermostat or an automation, or the two will
-          fight.
+          fight. If someone changes them by hand, HZT leaves the room alone for
+          two hours.
         </p>
-        <div class="side-actions start">
+        <div class="actions">
           <button
             class="primary"
             @click=${async () => {
               if (
                 await this.save(updateZone(config, zone.id, { shadow: false }))
               ) {
-                this.confirmLive = false;
+                this.confirmLive = undefined;
               }
             }}
           >
             Go live
           </button>
           <button
-            class="pill"
+            class="text"
             @click=${() => {
-              this.confirmLive = false;
+              this.confirmLive = undefined;
             }}
           >
             Cancel
@@ -816,51 +543,157 @@ export class HztPanel extends LitElement {
         </div>
       </div>`;
     }
-    return html`<div class="mode">
-      <p>
-        <strong>Shadow mode.</strong> HZT decides but sends nothing, so you can
-        compare its decisions with what runs now.
-      </p>
+    return html`<p class="mode">
+      Shadow: HZT decides but sends nothing ·
       <button
-        class="pill"
+        class="text link"
         ?disabled=${units.length === 0}
         @click=${() => {
-          this.confirmLive = true;
+          this.confirmLive = zone.id;
         }}
       >
         Go live…
       </button>
+    </p>`;
+  }
+
+  private renderZoneEmpty(config: HouseConfig, zone: Zone) {
+    return html`<div class="section empty-state">
+      <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true">
+        <path d="M14 14.8V4a2 2 0 1 0-4 0v10.8a4 4 0 1 0 4 0z" />
+      </svg>
+      <p class="empty-title">Two things and HZT can look after ${zone.name}</p>
+      <p class="small">
+        A sensor that reads the room, and whatever heats or cools it: an AC, a
+        radiator’s valve, a heater on a smart plug. It starts in shadow mode,
+        so nothing moves until you say.
+      </p>
+      <div class="empty-actions">
+        <label class="field">
+          Reads the room from
+          <select @change=${(event: Event) => this.setSensor(config, zone, event)}>
+            ${this.temperatureOptions(null, "Choose a sensor")}
+          </select>
+        </label>
+        ${
+          this.addingUnit === zone.id
+            ? nothing
+            : html`<button
+              class="secondary"
+              @click=${() => {
+                this.addingUnit = zone.id;
+              }}
+            >
+              Add what heats or cools it
+            </button>`
+        }
+      </div>
     </div>`;
   }
 
+  private setSensor(config: HouseConfig, zone: Zone, event: Event) {
+    this.save(
+      updateZone(config, zone.id, {
+        room_sensor: selectValue(event.target) || null,
+      }),
+    );
+  }
+
+  // The room's sensor, and the band it's kept in.
+  private renderZoneRoom(config: HouseConfig, zone: Zone) {
+    const { heatBelow, coolAbove } = bandEdges(zone.target, zone.idle_band);
+    return html`<div class="section room">
+      <label class="field">
+        Reads the room from
+        <select @change=${(event: Event) => this.setSensor(config, zone, event)}>
+          ${this.temperatureOptions(zone.room_sensor, "No sensor")}
+        </select>
+        ${
+          zone.room_sensor
+            ? nothing
+            : html`<small class="warn"
+              >Without one, HZT can’t tell how warm the room is and keeps every
+              unit off.</small
+            >`
+        }
+      </label>
+      <div class="field">
+        <span>Keeps it between</span>
+        <strong class="band-value"
+          >${tenths(heatBelow)} – ${tenths(coolAbove)} °C</strong
+        >
+        <div class="band-row">
+          <label class="inline">
+            Target
+            <input
+              type="number"
+              min="5"
+              max="35"
+              step="0.1"
+              .value=${String(zone.target)}
+              aria-label="Target"
+              @change=${(event: Event) => {
+                const value = Number((event.target as HTMLInputElement).value);
+                if (Number.isFinite(value) && value >= 5 && value <= 35) {
+                  this.save(
+                    updateZone(config, zone.id, {
+                      target: Math.round(value * 10) / 10,
+                    }),
+                  );
+                }
+              }}
+            />
+            °C
+          </label>
+          <label class="inline">
+            Idle band
+            <select
+              aria-label="Idle band"
+              @change=${(event: Event) =>
+                this.save(
+                  updateZone(config, zone.id, {
+                    idle_band: Number(selectValue(event.target)),
+                  }),
+                )}
+            >
+              ${[...new Set([...BANDS, zone.idle_band])]
+                .sort((a, b) => a - b)
+                .map(
+                  (band) => html`<option
+                    value=${band}
+                    ?selected=${band === zone.idle_band}
+                  >
+                    ±${tenths(band / 2)} °C
+                  </option>`,
+                )}
+            </select>
+          </label>
+        </div>
+        <small
+          >Heats below ${tenths(heatBelow)}, cools above ${tenths(coolAbove)};
+          between them nothing runs. The target is also set on the room’s
+          card.</small
+        >
+      </div>
+    </div>`;
+  }
+
+  // An order means something only with two units for a direction; then
+  // it's here, with the units' order to change.
   private renderOrders(config: HouseConfig, zone: Zone, units: RoomUnit[]) {
     const heaters = units.filter((u) => u.can_heat);
     const coolers = units.filter((u) => u.can_cool);
-    const only = heaters[0];
-    // One unit doing both: one line, not two identical ones.
-    if (
-      only &&
-      heaters.length === 1 &&
-      coolers.length === 1 &&
-      coolers[0] === only
-    ) {
-      const mode = this.status(zone.id).demands[only.id]?.mode ?? "";
-      return html`<h3 class="eyebrow">Heating and cooling</h3>
-        <button
-          class="row single"
-          @click=${() => this.show({ kind: "unit", unitId: only.id })}
-        >
-          <span class="rank ${mode}"></span>
-          <span class="order-text">
-            <span class="order-name">${only.name}</span>
-            <span class="order-rule">Does all the heating and cooling.</span>
-          </span>
-        </button>`;
+    if (heaters.length < 2 && coolers.length < 2) {
+      return nothing;
     }
-    return html`<h3 class="eyebrow">Heating</h3>
-      ${this.renderOrder(config, zone, heaters, "heat")}
-      <h3 class="eyebrow">Cooling</h3>
-      ${this.renderOrder(config, zone, coolers, "cool")}`;
+    return html`<div class="section orders">
+      ${heaters.length >= 2 ? this.renderOrder(config, zone, heaters, "heat") : nothing}
+      ${coolers.length >= 2 ? this.renderOrder(config, zone, coolers, "cool") : nothing}
+      <p class="small">
+        The first runs first; the next joins when it can’t keep up. One that
+        can’t run right now (locked out, unavailable) is skipped.
+      </p>
+    </div>`;
   }
 
   private renderOrder(
@@ -869,67 +702,37 @@ export class HztPanel extends LitElement {
     units: RoomUnit[],
     mode: "heat" | "cool",
   ) {
-    const verb = mode === "heat" ? "heats" : "cools";
-    if (units.length === 0) {
-      return html`<p class="small">Nothing in ${zone.name} ${verb}.</p>`;
-    }
     const demands = this.status(zone.id).demands;
-    if (units.length === 1) {
-      const unit = units[0] as RoomUnit;
-      return html`<button
-        class="row single"
-        @click=${() => this.show({ kind: "unit", unitId: unit.id })}
-      >
-        <span class="rank ${demands[unit.id]?.mode === mode ? mode : ""}"></span>
-        <span class="order-text">
-          <span class="order-name">${unit.name}</span>
-          <span class="order-rule"
-            >Does all the ${mode === "heat" ? "heating" : "cooling"}.</span
-          >
-        </span>
-      </button>`;
-    }
-    return html`<ol class="order" aria-label="${capitalize(mode)}ing order">
-      ${units.map((unit, index) => {
-        const running = demands[unit.id]?.mode === mode;
-        let rule: string;
-        if (index === 0) {
-          rule = "First choice";
-        } else {
-          rule = `Joins when ${index === 1 ? "#1" : `#1–${index}`} can’t keep up`;
-        }
-        return html`<li>
-          <span class="rank ${running ? mode : ""}">${index + 1}</span>
-          <button
-            class="order-text link"
-            @click=${() => this.show({ kind: "unit", unitId: unit.id })}
-          >
+    const label = mode === "heat" ? "Heating order" : "Cooling order";
+    return html`<div class="order-col">
+      <h4>${label}</h4>
+      <ol class="order" aria-label=${label}>
+        ${units.map(
+          (unit, index) => html`<li>
+            <span class="rank ${demands[unit.id]?.mode === mode ? mode : ""}"
+              >${index + 1}</span
+            >
             <span class="order-name">${unit.name}</span>
-            <span class="order-rule">${rule}</span>
-          </button>
-          <button
-            class="icon"
-            aria-label="Move ${unit.name} up"
-            ?disabled=${index === 0}
-            @click=${() => this.moveWithin(config, units, index, -1)}
-          >
-            ↑
-          </button>
-          <button
-            class="icon"
-            aria-label="Move ${unit.name} down"
-            ?disabled=${index === units.length - 1}
-            @click=${() => this.moveWithin(config, units, index, 1)}
-          >
-            ↓
-          </button>
-        </li>`;
-      })}
-    </ol>
-    <p class="small">
-      A unit that can’t run right now (locked out, unavailable) is skipped; the
-      next one moves up.
-    </p>`;
+            <button
+              class="icon small-icon"
+              aria-label="Move ${unit.name} up"
+              ?disabled=${index === 0}
+              @click=${() => this.moveWithin(config, units, index, -1)}
+            >
+              ↑
+            </button>
+            <button
+              class="icon small-icon"
+              aria-label="Move ${unit.name} down"
+              ?disabled=${index === units.length - 1}
+              @click=${() => this.moveWithin(config, units, index, 1)}
+            >
+              ↓
+            </button>
+          </li>`,
+        )}
+      </ol>
+    </div>`;
   }
 
   // Moves a unit past its neighbour in this list, skipping units of the
@@ -954,309 +757,362 @@ export class HztPanel extends LitElement {
     this.save(next);
   }
 
-  // ---- One room unit ----------------------------------------------------
+  // ---- Room units ----------------------------------------------------------
 
-  private renderUnit(config: HouseConfig, unit: RoomUnit) {
-    const zone = config.zones.find((z) => z.id === unit.zone_id);
-    const zoneName = zone?.name ?? "";
-    const status = this.status(unit.zone_id).units[unit.id];
-    const outdoor = this.outdoor(config);
-    const hasSensor = config.house.outdoor_sensor !== null;
-    const siblings = unitsOf(config, unit.zone_id);
-    const nextHeater = siblings.find((u) => u !== unit && u.can_heat);
-    const nextCooler = siblings.find((u) => u !== unit && u.can_cool);
+  private unitWord(unit: RoomUnit): string {
+    const status = this.status(unit.zone_id);
+    const demand = status.demands[unit.id];
+    const unitStatus = status.units[unit.id];
+    if (this.hass?.states[unit.entity_id]?.state === "unavailable") {
+      return "unavailable";
+    }
+    if (demand?.mode) {
+      const verb = demand.mode === "heat" ? "heat" : "cool";
+      return status.shadow ? `would ${verb}` : `${verb}ing`;
+    }
+    if (
+      (status.state === "heating" && unitStatus?.heat_locked) ||
+      (status.state === "cooling" && unitStatus?.cool_locked)
+    ) {
+      return "locked out";
+    }
+    if (status.state === "heating") {
+      return unit.can_heat ? "standby" : "idle, cools only";
+    }
+    if (status.state === "cooling") {
+      return unit.can_cool ? "standby" : "idle, heats only";
+    }
+    return status.state === "manual" ? "manual" : "idle";
+  }
+
+  // What it does for this room, in a few words.
+  private unitRole(unit: RoomUnit, units: RoomUnit[]): string {
+    const heaters = units.filter((u) => u.can_heat);
+    const coolers = units.filter((u) => u.can_cool);
+    if (unit.can_heat && unit.can_cool) {
+      return heaters.length === 1 && coolers.length === 1
+        ? "Heats and cools this room"
+        : "Heats and cools";
+    }
+    if (unit.can_heat) {
+      return heaters.length === 1 ? "Does all the heating" : "Heats";
+    }
+    if (unit.can_cool) {
+      return coolers.length === 1 ? "Does all the cooling" : "Cools";
+    }
+    return "Not used: neither heats nor cools";
+  }
+
+  private renderUnit(
+    config: HouseConfig,
+    zone: Zone,
+    unit: RoomUnit,
+    units: RoomUnit[],
+  ) {
+    const status = this.status(zone.id).units[unit.id];
     const change = (changes: Partial<RoomUnit>) =>
       this.save(updateRoomUnit(config, unit.id, changes));
+    const word = this.unitWord(unit);
+    const switched = isSwitchEntity(unit.entity_id);
 
-    const lockoutUpshot = (
-      mode: "heat" | "cool",
-      threshold: number | null,
-      next: RoomUnit | undefined,
-      locked: boolean | undefined,
-    ) => {
-      const verb = mode === "heat" ? "heats" : "cools";
-      if (!hasSensor) {
-        return "Needs an outdoor sensor: choose one under the map.";
-      }
-      if (threshold === null) {
-        return `${unit.name} ${verb} whatever the weather.`;
-      }
-      const takeover = next
-        ? `${next.name} takes over the ${mode === "heat" ? "heating" : "cooling"}`
-        : `nothing ${verb} ${zoneName}`;
-      const now =
-        outdoor === undefined
-          ? ""
-          : ` It’s ${degrees(outdoor)} now${locked ? ", so it’s locked out" : ""}.`;
-      return `Below ${wholeDegrees(threshold)}, ${takeover}.${now}`;
-    };
+    const heatLockout =
+      unit.can_heat &&
+      (unit.heat_lockout_below !== null ||
+        this.opened.has(`heat-lockout:${unit.id}`));
+    const coolLockout =
+      unit.can_cool &&
+      (unit.cool_lockout_below !== null ||
+        this.opened.has(`cool-lockout:${unit.id}`));
+    const rest =
+      unit.min_run !== DEFAULT_MIN_RUN ||
+      unit.min_rest !== DEFAULT_MIN_REST ||
+      this.opened.has(`rest:${unit.id}`);
+    const cycle =
+      switched &&
+      (unit.cycle_minutes !== DEFAULT_CYCLE ||
+        this.opened.has(`cycle:${unit.id}`));
 
-    return html`<div class="side-head">
-        <button class="text back" @click=${() => this.show({ kind: "zone" })}>
-          ← ${zoneName}
+    const pills = [
+      unit.can_heat && !heatLockout
+        ? this.pill("Stop it heating in the cold", () => {
+            this.open(`heat-lockout:${unit.id}`);
+            change({ heat_lockout_below: DEFAULT_HEAT_LOCKOUT });
+          })
+        : nothing,
+      unit.can_cool && !coolLockout
+        ? this.pill("Stop it cooling in the cold", () => {
+            this.open(`cool-lockout:${unit.id}`);
+            change({ cool_lockout_below: DEFAULT_COOL_LOCKOUT });
+          })
+        : nothing,
+      switched && !cycle
+        ? this.pill("Switch it on longer cycles", () =>
+            this.open(`cycle:${unit.id}`),
+          )
+        : nothing,
+      rest
+        ? nothing
+        : this.pill("Let it rest longer between runs", () =>
+            this.open(`rest:${unit.id}`),
+          ),
+    ];
+
+    return html`<section class="section unit" aria-label=${unit.name}>
+      <div class="unit-head">
+        <span class="unit-name">${unit.name}</span>
+        <span class="small"
+          >${this.unitRole(unit, units)} · ${capitalize(word)}</span
+        >
+        <button
+          class="text quiet end"
+          @click=${() => this.save(removeRoomUnit(config, unit.id))}
+        >
+          Remove
         </button>
-        <div class="title-row">
-          <h2 class="big">${unit.name}</h2>
-          <span class="chip">${capitalize(this.unitWord(unit))}</span>
-        </div>
-        <span class="small mono">${unit.entity_id}</span>
       </div>
       ${
         status?.note
-          ? html`<p class="reason"><strong>Now:</strong> ${status.note}.</p>`
-          : nothing
-      }
-
-      <h3 class="eyebrow">What it does</h3>
-      <div class="checks">
-        <label class="check">
-          <input
-            type="checkbox"
-            .checked=${unit.can_heat}
-            @change=${(event: Event) =>
-              change({ can_heat: (event.target as HTMLInputElement).checked })}
-          />
-          Heats
-        </label>
-        <label class="check">
-          <input
-            type="checkbox"
-            .checked=${unit.can_cool}
-            @change=${(event: Event) =>
-              change({ can_cool: (event.target as HTMLInputElement).checked })}
-          />
-          Cools
-        </label>
-      </div>
-      <p class="small">
-        ${
-          unit.can_heat || unit.can_cool
-            ? `HZT uses it to ${[unit.can_heat ? "heat" : "", unit.can_cool ? "cool" : ""].filter(Boolean).join(" and ")} ${zoneName}.`
-            : `HZT doesn’t use it at all.`
-        }
-      </p>
-
-      ${isSwitchEntity(unit.entity_id) ? this.renderSwitching(unit, change) : nothing}
-
-      <h3 class="eyebrow">Outdoor lockouts</h3>
-      ${
-        unit.can_heat
-          ? html`<label class="field">
-            Stop heating below
-            <select
-              ?disabled=${!hasSensor}
-              @change=${(event: Event) =>
-                change({ heat_lockout_below: numberOrNull(event.target) })}
-            >
-              <option value="" ?selected=${unit.heat_lockout_below === null}>
-                Never
-              </option>
-              ${HEAT_LOCKOUTS.map(
-                (t) => html`<option
-                  value=${t}
-                  ?selected=${t === unit.heat_lockout_below}
-                >
-                  ${wholeDegrees(t)}
-                </option>`,
-              )}
-            </select>
-            <small
-              >${lockoutUpshot(
-                "heat",
-                unit.heat_lockout_below,
-                nextHeater,
-                status?.heat_locked,
-              )}</small
-            >
-          </label>`
+          ? html`<p class="small note">Now: ${status.note}.</p>`
           : nothing
       }
       ${
-        unit.can_cool
-          ? html`<label class="field">
-            Stop cooling below
-            <select
-              ?disabled=${!hasSensor}
-              @change=${(event: Event) =>
-                change({ cool_lockout_below: numberOrNull(event.target) })}
+        switched
+          ? // A relay is on or off: on powers one thing, which heats or
+            // cools. So it's one choice, never both.
+            html`<div
+              class="checks"
+              role="radiogroup"
+              aria-label="What ${unit.name} powers"
             >
-              <option value="" ?selected=${unit.cool_lockout_below === null}>
-                Never
-              </option>
-              ${COOL_LOCKOUTS.map(
-                (t) => html`<option
-                  value=${t}
-                  ?selected=${t === unit.cool_lockout_below}
-                >
-                  ${wholeDegrees(t)}
-                </option>`,
-              )}
-            </select>
-            <small
-              >${lockoutUpshot(
-                "cool",
-                unit.cool_lockout_below,
-                nextCooler,
-                status?.cool_locked,
-              )}</small
-            >
-          </label>`
+              <label class="check">
+                <input
+                  type="radio"
+                  name="does-${unit.id}"
+                  .checked=${unit.can_heat}
+                  @change=${() => change({ can_heat: true, can_cool: false })}
+                />
+                Heats
+              </label>
+              <label class="check">
+                <input
+                  type="radio"
+                  name="does-${unit.id}"
+                  .checked=${unit.can_cool}
+                  @change=${() => change({ can_heat: false, can_cool: true })}
+                />
+                Cools
+              </label>
+              <span class="small mono">${unit.entity_id}</span>
+            </div>`
+          : html`<div class="checks">
+              <label class="check">
+                <input
+                  type="checkbox"
+                  .checked=${unit.can_heat}
+                  @change=${(event: Event) =>
+                    change({
+                      can_heat: (event.target as HTMLInputElement).checked,
+                    })}
+                />
+                Heats
+              </label>
+              <label class="check">
+                <input
+                  type="checkbox"
+                  .checked=${unit.can_cool}
+                  @change=${(event: Event) =>
+                    change({
+                      can_cool: (event.target as HTMLInputElement).checked,
+                    })}
+                />
+                Cools
+              </label>
+              <span class="small mono">${unit.entity_id}</span>
+            </div>`
+      }
+      ${
+        switched && unit.can_cool
+          ? html`<p class="small">
+            HZT switches its power on to cool: a fan, or a window AC on a plug
+            that cools whenever it has power.
+          </p>`
           : nothing
       }
       ${
-        unit.can_heat || unit.can_cool
-          ? nothing
-          : html`<p class="small">Turn on heating or cooling to set these.</p>`
+        switched && !unit.can_cool
+          ? html`<p class="small">
+            HZT only switches its power. Set the heater’s own thermostat to its
+            maximum so it doesn’t switch itself off first, and make sure the
+            relay or plug is rated for the heater’s power.
+          </p>`
+          : nothing
       }
-
-      <h3 class="eyebrow">Equipment protection</h3>
-      <div class="facts">
-        <label class="fact">
-          <span>Runs at least</span>
-          <select
-            @change=${(event: Event) =>
-              change({ min_run: Number(selectValue(event.target)) })}
-          >
-            ${MINUTES.map(
-              (m) =>
-                html`<option value=${m} ?selected=${m === unit.min_run}>
-                  ${m} min
-                </option>`,
-            )}
-          </select>
-        </label>
-        <label class="fact">
-          <span>Rests at least</span>
-          <select
-            @change=${(event: Event) =>
-              change({ min_rest: Number(selectValue(event.target)) })}
-          >
-            ${MINUTES.map(
-              (m) =>
-                html`<option value=${m} ?selected=${m === unit.min_rest}>
-                  ${m} min
-                </option>`,
-            )}
-          </select>
-        </label>
-      </div>
-      <p class="small">
-        Once started, it runs at least ${unit.min_run} min; once stopped, it
-        waits at least ${unit.min_rest} min before starting again, so it
-        doesn’t short-cycle.${
-          unit.can_heat && unit.can_cool
-            ? ` Switching between heating and cooling waits at least ${CHANGEOVER_MINUTES} min.`
-            : ""
-        }
-      </p>
-
-      <div class="side-actions">
-        <button class="pill" @click=${() => this.show({ kind: "zone" })}>
-          Done
-        </button>
-        <button
-          class="text danger"
-          @click=${async () => {
-            if (await this.save(removeRoomUnit(config, unit.id))) {
-              this.show({ kind: "zone" });
-            }
-          }}
-        >
-          Remove from ${zoneName}
-        </button>
-      </div>`;
+      ${heatLockout ? this.renderLockout(config, zone, unit, units, "heat") : nothing}
+      ${coolLockout ? this.renderLockout(config, zone, unit, units, "cool") : nothing}
+      ${cycle ? this.renderCycle(unit, change) : nothing}
+      ${rest ? this.renderRest(unit, change) : nothing}
+      <div class="pills">${pills}</div>
+    </section>`;
   }
 
-  private renderSwitching(
+  private renderLockout(
+    config: HouseConfig,
+    zone: Zone,
+    unit: RoomUnit,
+    units: RoomUnit[],
+    mode: "heat" | "cool",
+  ) {
+    const key: Opened = `${mode}-lockout:${unit.id}`;
+    const field = mode === "heat" ? "heat_lockout_below" : "cool_lockout_below";
+    const threshold =
+      unit[field] ??
+      (mode === "heat" ? DEFAULT_HEAT_LOCKOUT : DEFAULT_COOL_LOCKOUT);
+    const choices = mode === "heat" ? HEAT_LOCKOUTS : COOL_LOCKOUTS;
+    const verb = mode === "heat" ? "heat" : "cool";
+    const next = units.find(
+      (u) => u !== unit && (mode === "heat" ? u.can_heat : u.can_cool),
+    );
+    const outdoor = this.outdoor(config);
+    const status = this.status(zone.id).units[unit.id];
+    const locked = mode === "heat" ? status?.heat_locked : status?.cool_locked;
+    const takeover = next
+      ? `${next.name} takes over the ${verb}ing`
+      : `nothing ${verb}s ${zone.name}`;
+    let upshot = `Below ${wholeDegrees(threshold)}, ${takeover}.`;
+    if (config.house.outdoor_sensor === null) {
+      upshot = `${upshot} It needs to know the outdoor temperature first.`;
+    } else if (outdoor !== undefined) {
+      upshot = `${upshot} It’s ${degrees(outdoor)} outdoors, so it ${
+        locked ? `can’t ${verb} now` : `may ${verb} now`
+      }.`;
+    }
+    return this.extra(
+      `Stop it ${verb}ing in the cold`,
+      () => {
+        this.close(key);
+        this.save(updateRoomUnit(config, unit.id, { [field]: null }));
+      },
+      html`<label class="inline">
+          Below
+          <select
+            @change=${(event: Event) =>
+              this.save(
+                updateRoomUnit(config, unit.id, {
+                  [field]: Number(selectValue(event.target)),
+                }),
+              )}
+          >
+            ${choices.map(
+              (t) => html`<option value=${t} ?selected=${t === threshold}>
+                ${wholeDegrees(t)}
+              </option>`,
+            )}
+          </select>
+          outdoors, it doesn’t ${verb}.
+        </label>
+        ${
+          config.house.outdoor_sensor === null
+            ? html`<label class="inline">
+              Outdoor temperature from
+              <select
+                @change=${(event: Event) =>
+                  this.save(
+                    setOutdoorSensor(config, selectValue(event.target) || null),
+                  )}
+              >
+                ${this.temperatureOptions(null, "Choose a sensor")}
+              </select>
+            </label>`
+            : nothing
+        }
+        <p class="small">${upshot}</p>`,
+    );
+  }
+
+  private renderRest(
     unit: RoomUnit,
     change: (changes: Partial<RoomUnit>) => Promise<boolean>,
   ) {
+    const key: Opened = `rest:${unit.id}`;
+    const minutes = (field: "min_run" | "min_rest", label: string) =>
+      html`<label class="inline">
+        ${label}
+        <select
+          @change=${(event: Event) =>
+            change({ [field]: Number(selectValue(event.target)) })}
+        >
+          ${[...new Set([...MINUTES, unit[field]])]
+            .sort((a, b) => a - b)
+            .map(
+              (m) => html`<option value=${m} ?selected=${m === unit[field]}>
+                ${m} min
+              </option>`,
+            )}
+        </select>
+      </label>`;
+    return this.extra(
+      "Let it rest longer between runs",
+      () => {
+        this.close(key);
+        change({ min_run: DEFAULT_MIN_RUN, min_rest: DEFAULT_MIN_REST });
+      },
+      html`<div class="row">
+          ${minutes("min_run", "Runs at least")}
+          ${minutes("min_rest", "Rests at least")}
+        </div>
+        <p class="small">
+          Once started, it runs at least ${unit.min_run} min; once stopped, it
+          waits at least ${unit.min_rest} min, so it doesn’t short-cycle.${
+            unit.can_heat && unit.can_cool
+              ? ` Switching between heating and cooling waits at least ${CHANGEOVER_MINUTES} min.`
+              : ""
+          } Closing this puts back ${DEFAULT_MIN_RUN} and ${DEFAULT_MIN_REST} min.
+        </p>`,
+    );
+  }
+
+  private renderCycle(
+    unit: RoomUnit,
+    change: (changes: Partial<RoomUnit>) => Promise<boolean>,
+  ) {
+    const key: Opened = `cycle:${unit.id}`;
     const cycle = unit.cycle_minutes;
     const example = Math.max(0.4 * cycle, unit.min_run);
     const exampleText =
       cycle - example < unit.min_rest
         ? "on the whole time"
         : `on ${Number(example.toFixed(1))} min of every ${cycle}`;
-    return html`<h3 class="eyebrow">Switched on and off</h3>
-      <label class="field">
-        Cycle
-        <select
-          @change=${(event: Event) =>
-            change({ cycle_minutes: Number(selectValue(event.target)) })}
-        >
-          ${CYCLES.map(
-            ([minutes, label]) =>
-              html`<option value=${minutes} ?selected=${minutes === cycle}>
-                ${label}
-              </option>`,
-          )}
-        </select>
-        <small
-          >HZT switches it on for part of every ${cycle} minutes: at 40 %
-          demand it’s ${exampleText}; at full demand, the whole time. Longer
-          cycles suit slow heat such as underfloor.</small
-        >
-      </label>
-      <p class="note-box">
-        HZT only switches its power. Set the heater’s own thermostat to its
-        maximum so it doesn’t switch itself off first, and make sure the relay
-        or plug is rated for the heater’s power.
-      </p>`;
+    return this.extra(
+      "Switch it on longer cycles",
+      () => {
+        this.close(key);
+        change({ cycle_minutes: DEFAULT_CYCLE });
+      },
+      html`<label class="inline">
+          Cycle
+          <select
+            aria-label="Cycle"
+            @change=${(event: Event) =>
+              change({ cycle_minutes: Number(selectValue(event.target)) })}
+          >
+            ${CYCLES.map(
+              ([minutes, label]) =>
+                html`<option value=${minutes} ?selected=${minutes === cycle}>
+                  ${label}
+                </option>`,
+            )}
+          </select>
+        </label>
+        <p class="small">
+          HZT switches it on for part of every ${cycle} minutes: at 40 % demand
+          it’s ${exampleText}; at full demand, the whole time. Longer cycles
+          suit slow heat such as underfloor.
+        </p>`,
+    );
   }
 
-  // ---- Adding things ---------------------------------------------------
-
-  private renderNewZone(config: HouseConfig, canCancel: boolean) {
-    const add = async (event: Event) => {
-      event.preventDefault();
-      const form = event.target as HTMLFormElement;
-      const data = new FormData(form);
-      const name = String(data.get("name") ?? "").trim();
-      if (!name) {
-        return;
-      }
-      const sensor = String(data.get("room_sensor") ?? "") || null;
-      const next = addZone(config, name, sensor);
-      if (await this.save(next)) {
-        this.selected = next.zones.at(-1)?.id;
-        this.show({ kind: "zone" });
-      }
-    };
-    return html`<form class="side-form" @submit=${add}>
-      <h2 class="big">New zone</h2>
-      <p class="small">
-        Something with one target temperature: a room, or an open-plan space.
-        It starts in shadow mode, deciding but sending nothing.
-      </p>
-      <label class="field">
-        Name
-        <input name="name" required placeholder="Living room" />
-      </label>
-      <label class="field">
-        Room temperature
-        <select name="room_sensor">
-          ${this.temperatureOptions(null)}
-        </select>
-        <small>The sensor that tells HZT how warm the room is.</small>
-      </label>
-      <div class="side-actions start">
-        <button type="submit" class="primary">Add zone</button>
-        ${
-          canCancel
-            ? html`<button
-              type="button"
-              class="pill"
-              @click=${() => this.show({ kind: "zone" })}
-            >
-              Cancel
-            </button>`
-            : nothing
-        }
-      </div>
-    </form>`;
-  }
-
-  private renderNewUnit(config: HouseConfig, zone: Zone) {
+  // The new unit's section, in place: pick the device, and it's a unit.
+  private renderAddUnit(config: HouseConfig, zone: Zone) {
     const used = new Set(config.room_units.map((u) => u.entity_id));
     const free = Object.values(this.hass?.states ?? {})
       .filter(
@@ -1276,10 +1132,8 @@ export class HztPanel extends LitElement {
     const climates = free.filter((e) => e.entity_id.startsWith("climate."));
     const switches = free.filter((e) => isSwitchEntity(e.entity_id));
     const add = async (event: Event) => {
-      event.preventDefault();
-      const form = event.target as HTMLFormElement;
-      const entityId = new FormData(form).get("entity_id");
-      if (typeof entityId !== "string" || !entityId || !this.hass) {
+      const entityId = selectValue(event.target);
+      if (!(entityId && this.hass)) {
         return;
       }
       const modes = this.hass.states[entityId]?.attributes.hvac_modes;
@@ -1294,13 +1148,7 @@ export class HztPanel extends LitElement {
         can_cool: !switched && hvacModes.includes("cool"),
       });
       if (await this.save(next)) {
-        const added = next.room_units.at(-1);
-        // A switch can't say what it does: confirm it on its own page.
-        this.show(
-          switched && added
-            ? { kind: "unit", unitId: added.id }
-            : { kind: "zone" },
-        );
+        this.addingUnit = undefined;
       }
     };
     const option = (entity: HassEntity) => {
@@ -1310,23 +1158,11 @@ export class HztPanel extends LitElement {
         ${area ? `${name} · ${area}` : name}
       </option>`;
     };
-    return html`<form class="side-form" @submit=${add}>
-      <button
-        type="button"
-        class="text back"
-        @click=${() => this.show({ kind: "zone" })}
-      >
-        ← ${zone.name}
-      </button>
-      <h2 class="big">New room unit</h2>
-      <p class="small">
-        A device that heats or cools ${zone.name}. It joins the end of the
-        zone’s order.
-      </p>
+    return html`<section class="section unit adding" aria-label="New room unit">
       <label class="field">
-        Device
-        <select name="entity_id" required>
-          <option value="">Choose one</option>
+        What heats or cools ${zone.name}?
+        <select @change=${add}>
+          <option value="">Choose a device</option>
           ${
             climates.length
               ? html`<optgroup label="ACs, heat pumps, thermostats and TRVs">
@@ -1343,37 +1179,75 @@ export class HztPanel extends LitElement {
           }
         </select>
       </label>
-      <ul class="small hints">
-        <li>
-          <strong>An AC, heat pump or TRV</strong> (a climate entity): HZT sets
-          its mode and setpoint. Whether it heats, cools or both is read from
-          its modes.
-        </li>
-        <li>
-          <strong>A heater on a relay or smart plug</strong> (a switch, or a
-          light, as many plugs show up): HZT switches its power on and off, for
-          longer or shorter as the room needs.
-        </li>
-      </ul>
-      <div class="side-actions start">
-        <button type="submit" class="primary">Add unit</button>
+      <p class="small">
+        An AC, heat pump or TRV: HZT sets its mode and setpoint, and reads
+        whether it heats, cools or both from its modes. A heater on a relay or
+        smart plug: HZT switches its power on and off, for longer or shorter as
+        the room needs. It joins the end of the room’s order.
+      </p>
+      <div class="actions">
         <button
-          type="button"
-          class="pill"
-          @click=${() => this.show({ kind: "zone" })}
+          class="text"
+          @click=${() => {
+            this.addingUnit = undefined;
+          }}
         >
           Cancel
         </button>
       </div>
-    </form>`;
+    </section>`;
   }
-}
 
-// Relays and plugs: switches, and lights, as many plugs are exposed.
-function isSwitchEntity(entityId: string): boolean {
-  return ["switch.", "light.", "input_boolean."].some((prefix) =>
-    entityId.startsWith(prefix),
-  );
+  // ---- Building blocks -----------------------------------------------------
+
+  // An add-or-enable action, named for why someone would want it.
+  private pill(label: string, onClick: () => void) {
+    return html`<button class="pill" @click=${onClick}>
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+      ${label}
+    </button>`;
+  }
+
+  // A setting that's on, with its own × to turn it off again. (Not named
+  // `panel`: HA sets a `panel` property on every sidebar page element.)
+  private extra(title: string, onClose: () => void, body: unknown) {
+    return html`<div class="panel" role="group" aria-label=${title}>
+      <div class="panel-head">
+        <span class="panel-title">${title}</span>
+        <button
+          class="icon"
+          aria-label="Turn off: ${title.toLowerCase()}"
+          @click=${onClose}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="panel-body">${body}</div>
+    </div>`;
+  }
+
+  private temperatureOptions(selected: string | null, none: string) {
+    const sensors = Object.values(this.hass?.states ?? {})
+      .filter(isTemperatureSensor)
+      .sort((a, b) => a.entity_id.localeCompare(b.entity_id));
+    return html`
+      <option value="" ?selected=${selected === null}>${none}</option>
+      ${sensors.map((entity) => {
+        const value = Number(entity.state);
+        const reading = Number.isFinite(value) ? ` · ${degrees(value)}` : "";
+        return html`<option
+          value=${entity.entity_id}
+          ?selected=${entity.entity_id === selected}
+        >
+          ${friendlyName(this.hass as Hass, entity.entity_id)}${reading}
+        </option>`;
+      })}
+    `;
+  }
 }
 
 function capitalize(text: string): string {
@@ -1382,11 +1256,6 @@ function capitalize(text: string): string {
 
 function selectValue(target: EventTarget | null): string {
   return target instanceof HTMLSelectElement ? target.value : "";
-}
-
-function numberOrNull(target: EventTarget | null): number | null {
-  const value = selectValue(target);
-  return value === "" ? null : Number(value);
 }
 
 function messageOf(error: unknown): string {

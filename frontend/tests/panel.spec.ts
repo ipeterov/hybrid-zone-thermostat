@@ -8,11 +8,11 @@ import {
 } from "../harness/fixtures";
 import type { HouseConfig } from "../src/hass";
 
-async function open(page: Page, fixture: Fixture | undefined) {
+async function open(page: Page, fixture: Fixture | undefined, query = "") {
   await page.addInitScript((f) => {
     window.hztFixture = f;
   }, fixture ?? {});
-  await page.goto("/");
+  await page.goto(`/${query}`);
 }
 
 function lastSaved(page: Page): Promise<HouseConfig | undefined> {
@@ -24,31 +24,31 @@ function lastSaved(page: Page): Promise<HouseConfig | undefined> {
   });
 }
 
-const side = (page: Page) => page.getByRole("complementary");
-const outdoorCard = (page: Page) =>
-  page.getByRole("region", { name: "Outdoor temperature" });
+const zone = (page: Page, name: string) =>
+  page.getByRole("article", { name, exact: true });
+const unit = (page: Page, zoneName: string, name: string) =>
+  zone(page, zoneName).getByRole("region", { name, exact: true });
+const panel = (scope: Page | ReturnType<Page["locator"]>, name: string) =>
+  scope.getByRole("group", { name });
 
-async function openUnit(page: Page, name: string) {
-  await page
-    .getByRole("button", { name: new RegExp(`^${name} `) })
-    .first()
-    .click();
-  await expect(side(page).getByRole("heading", { name })).toBeVisible();
-}
+const withoutUnits = {
+  config: { ...LIVING_ROOM, room_units: [] },
+  states: DEVICES,
+};
 
-// ---- Loading and empty ---------------------------------------------------
+// ---- The house -------------------------------------------------------------
 
-test("an empty house explains zones and offers to add one", async ({
+test("an empty house says what HZT does and offers to control a room", async ({
   page,
 }) => {
   await open(page, FIXTURES.empty);
 
+  await expect(page.getByRole("heading", { name: "Your house" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Climate zones" }),
+    page.getByText("HZT keeps each room within a band"),
   ).toBeVisible();
-  await expect(page.getByText("No zones yet.")).toBeVisible();
   await expect(
-    side(page).getByRole("heading", { name: "New zone" }),
+    page.getByRole("button", { name: "Control a room" }),
   ).toBeVisible();
 });
 
@@ -58,116 +58,193 @@ test("says when the zones can't be loaded", async ({ page }) => {
   await expect(page.getByRole("alert")).toContainText("isn't set up");
 });
 
-// ---- Zones -------------------------------------------------------------
-
-test("adds a zone, in shadow mode, and selects it", async ({ page }) => {
+test("a house with no room offers no extras: there's nothing for them to act on", async ({
+  page,
+}) => {
   await open(page, FIXTURES.empty);
 
-  await side(page).getByLabel("Name").fill("Living room");
-  await side(page)
-    .getByLabel("Room temperature")
-    .selectOption("sensor.co2_monitor_temperature");
-  await side(page).getByRole("button", { name: "Add zone" }).click();
-
   await expect(
-    side(page).getByRole("heading", { name: "Living room" }),
+    page.getByRole("button", { name: "Control a room" }),
   ).toBeVisible();
-  await expect(side(page)).toContainText("Shadow mode.");
+  await expect(
+    page.getByRole("button", { name: "Use the outdoor temperature" }),
+  ).toHaveCount(0);
+});
+
+test("the outdoor temperature waits behind a pill until it's wanted", async ({
+  page,
+}) => {
+  await open(page, FIXTURES["no-outdoor-sensor"]);
+
+  await page
+    .getByRole("button", { name: "Use the outdoor temperature" })
+    .click();
+  await panel(page, "Use the outdoor temperature")
+    .getByLabel("Read from")
+    .selectOption("sensor.outdoor_temperature");
+
+  await expect
+    .poll(async () => (await lastSaved(page))?.house.outdoor_sensor)
+    .toBe("sensor.outdoor_temperature");
+  await expect(panel(page, "Use the outdoor temperature")).toContainText(
+    "No unit uses it yet.",
+  );
+});
+
+test("the outdoor panel says which units it stops, and × turns it off", async ({
+  page,
+}) => {
+  await open(page, FIXTURES["living-room"]);
+  const outdoor = panel(page, "Use the outdoor temperature");
+
+  await expect(outdoor).toContainText("Hisense AC stops heating below −15 °C.");
+  await expect(outdoor).toContainText(
+    "Without it, those limits stop applying.",
+  );
+  await outdoor
+    .getByRole("button", { name: "Turn off: use the outdoor temperature" })
+    .click();
+
+  await expect
+    .poll(async () => (await lastSaved(page))?.house.outdoor_sensor)
+    .toBeNull();
+  await expect(
+    page.getByRole("button", { name: "Use the outdoor temperature" }),
+  ).toBeVisible();
+});
+
+// ---- Rooms -----------------------------------------------------------------
+
+test("adding a room asks its name and shows what it still needs", async ({
+  page,
+}) => {
+  await open(page, FIXTURES.empty);
+
+  await page.getByRole("button", { name: "Control a room" }).click();
+  await page.getByLabel("What’s the room called?").fill("Bedroom");
+  await page.getByRole("button", { name: "Add room" }).click();
+
   const saved = await lastSaved(page);
   expect(saved?.zones).toEqual([
-    expect.objectContaining({
-      id: "living_room",
-      room_sensor: "sensor.co2_monitor_temperature",
-      shadow: true,
-    }),
+    expect.objectContaining({ id: "bedroom", shadow: true, room_sensor: null }),
   ]);
-});
-
-test("offers only temperature sensors", async ({ page }) => {
-  await open(page, FIXTURES.empty);
-
+  await expect(zone(page, "Bedroom")).toContainText("Not set up yet");
+  await expect(zone(page, "Bedroom")).toContainText(
+    "Two things and HZT can look after Bedroom",
+  );
   await expect(
-    side(page).getByLabel("Room temperature").locator("option"),
-  ).toHaveText([
-    "None",
-    "Bedroom temperature",
-    "CO2 Monitor Temperature",
-    "Entryway temperature",
-    "Outdoor temperature",
-  ]);
+    page.getByRole("button", { name: "Control another room" }),
+  ).toBeVisible();
 });
 
-test("maps every unit to its zone and shows what's running", async ({
+test("a new room offers only temperature sensors, with their readings", async ({
   page,
 }) => {
-  await open(page, FIXTURES.house);
+  await open(page, {
+    config: {
+      ...LIVING_ROOM,
+      zones: [{ ...LIVING_ROOM.zones[0], room_sensor: null } as never],
+      room_units: [],
+    },
+    states: DEVICES,
+  });
 
-  await expect(page.getByText("Would heat · #1")).toBeVisible();
-  await expect(page.getByText("Standby · #2")).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: /^Bedroom 19\.8 → 20\.0 · idle/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: /^Entryway 16\.1 → 18\.0 · off/ }),
-  ).toBeVisible();
-});
-
-test("selecting another zone shows it on the side", async ({ page }) => {
-  await open(page, FIXTURES.house);
-
-  await page.getByRole("button", { name: /^Bedroom 19\.8/ }).click();
-
-  await expect(
-    side(page).getByRole("heading", { name: "Bedroom" }),
-  ).toBeVisible();
-  await expect(side(page)).toContainText("between 19.25 and 20.75");
-});
-
-test("shows a zone's state, reason and heating order", async ({ page }) => {
-  await open(page, FIXTURES["living-room"]);
-
-  await expect(side(page).getByText("Would heat")).toBeVisible();
-  await expect(side(page)).toContainText("0.6 °C below 22.0");
-  await expect(
-    side(page)
-      .getByRole("list", { name: "Heating order" })
-      .getByRole("listitem"),
-  ).toHaveText([
-    /Hisense AC[\s\S]*First choice/,
-    /Living room radiator[\s\S]*#1 can’t keep up/,
+  const sensor = zone(page, "Living room").getByLabel("Reads the room from");
+  await expect(sensor.locator("option")).toHaveText([
+    "Choose a sensor",
+    "Bedroom temperature · 19.8 °C",
+    "CO2 Monitor Temperature · 21.4 °C",
+    "Entryway temperature · 16.1 °C",
+    "Outdoor temperature · 7.2 °C",
   ]);
-  // One cooler isn't an order.
-  await expect(
-    side(page).getByRole("list", { name: "Cooling order" }),
-  ).toHaveCount(0);
-  await expect(side(page)).toContainText("Does all the cooling.");
+  await sensor.selectOption("sensor.co2_monitor_temperature");
+
+  await expect
+    .poll(async () => (await lastSaved(page))?.zones[0]?.room_sensor)
+    .toBe("sensor.co2_monitor_temperature");
 });
 
-test("one unit doing both gets one line, not two orders", async ({ page }) => {
-  await open(page, FIXTURES["just-the-ac"]);
+test("each room says what it's doing, and why", async ({ page }) => {
+  await open(page, FIXTURES.house);
 
-  await expect(side(page)).toContainText("Heating and cooling");
-  await expect(side(page)).toContainText("Does all the heating and cooling.");
-  await expect(side(page).getByRole("list")).toHaveCount(0);
+  await expect(zone(page, "Living room")).toContainText("Would heat · 21.4 °C");
+  await expect(zone(page, "Living room")).toContainText(
+    "0.6 °C below 22.0: heating with Hisense AC at 60%.",
+  );
+  await expect(zone(page, "Bedroom")).toContainText("Idle · 19.8 °C");
+  await expect(zone(page, "Entryway")).toContainText("Off · 16.1 °C");
 });
 
-test("the idle band is centred on the target and says where", async ({
-  page,
-}) => {
+test("the band is centred on the target and says where", async ({ page }) => {
   await open(page, FIXTURES["living-room"]);
+  const room = zone(page, "Living room");
 
-  await side(page).getByLabel("Idle band").selectOption("2");
+  await expect(room).toContainText("22.0 – 23.0 °C");
+  await room.getByLabel("Idle band").selectOption("2");
 
   await expect
     .poll(async () => (await lastSaved(page))?.zones[0]?.idle_band)
     .toBe(2);
-  await expect(side(page)).toContainText("Heats below 21.5, cools above 23.5");
+  await expect(room).toContainText("Heats below 21.5, cools above 23.5");
+});
+
+test("the target can be set here too", async ({ page }) => {
+  await open(page, FIXTURES["living-room"]);
+
+  await zone(page, "Living room").getByLabel("Target").fill("23.4");
+  await zone(page, "Living room").getByLabel("Target").press("Enter");
+
+  await expect
+    .poll(async () => (await lastSaved(page))?.zones[0]?.target)
+    .toBe(23.4);
+});
+
+test("removes a room", async ({ page }) => {
+  await open(page, FIXTURES.house);
+
+  await zone(page, "Entryway")
+    .getByRole("button", { name: "Remove room" })
+    .click();
+
+  await expect
+    .poll(async () => (await lastSaved(page))?.zones.map((z) => z.id))
+    .toEqual(["living_room", "bedroom"]);
+});
+
+// ---- Orders ----------------------------------------------------------------
+
+test("two heaters make a heating order; one cooler isn't an order", async ({
+  page,
+}) => {
+  await open(page, FIXTURES["living-room"]);
+  const room = zone(page, "Living room");
+
+  await expect(
+    room.getByRole("list", { name: "Heating order" }).getByRole("listitem"),
+  ).toHaveText([/Hisense AC/, /Living room radiator/]);
+  await expect(room.getByRole("list", { name: "Cooling order" })).toHaveCount(
+    0,
+  );
+  await expect(unit(page, "Living room", "Hisense AC")).toContainText(
+    "Heats and cools",
+  );
+});
+
+test("one unit doing both has no order, just what it does", async ({
+  page,
+}) => {
+  await open(page, FIXTURES["just-the-ac"]);
+
+  await expect(zone(page, "Living room").getByRole("list")).toHaveCount(0);
+  await expect(unit(page, "Living room", "Hisense AC")).toContainText(
+    "Heats and cools this room",
+  );
 });
 
 test("reorders the heating order", async ({ page }) => {
   await open(page, FIXTURES["living-room"]);
 
-  await side(page)
+  await zone(page, "Living room")
     .getByRole("button", { name: "Move Living room radiator up" })
     .click();
 
@@ -176,65 +253,84 @@ test("reorders the heating order", async ({ page }) => {
     .toEqual(["living_room_radiator", "hisense_ac"]);
 });
 
-// ---- Shadow and live ---------------------------------------------------
+// ---- Shadow and live -------------------------------------------------------
 
 test("going live asks first, then saves", async ({ page }) => {
   await open(page, FIXTURES["just-the-ac"]);
+  const room = zone(page, "Living room");
 
-  await side(page).getByRole("button", { name: "Go live…" }).click();
-  await expect(side(page)).toContainText("Hand Hisense AC to HZT?");
+  await expect(room).toContainText("Shadow: HZT decides but sends nothing");
+  await room.getByRole("button", { name: "Go live…" }).click();
+  await expect(room).toContainText("Hand Hisense AC to HZT?");
   expect(await lastSaved(page)).toBeUndefined();
-  await side(page)
-    .getByRole("button", { name: "Go live", exact: true })
-    .click();
+  await room.getByRole("button", { name: "Go live", exact: true }).click();
 
   await expect
     .poll(async () => (await lastSaved(page))?.zones[0]?.shadow)
     .toBe(false);
-  await expect(side(page)).toContainText("Live.");
+  await expect(room).toContainText("Live: HZT drives Hisense AC");
 });
 
-test("a live zone says what HZT controls and offers shadow mode back", async ({
-  page,
-}) => {
+test("a live room offers shadow mode back", async ({ page }) => {
   await open(page, FIXTURES.live);
 
-  await expect(side(page)).toContainText("HZT sets Hisense AC’s mode");
-  await side(page).getByRole("button", { name: "Back to shadow mode" }).click();
+  await zone(page, "Living room")
+    .getByRole("button", { name: "Use shadow mode" })
+    .click();
 
   await expect
     .poll(async () => (await lastSaved(page))?.zones[0]?.shadow)
     .toBe(true);
 });
 
-// ---- Room units --------------------------------------------------------
+// ---- Room units ------------------------------------------------------------
 
-test("adds a room unit, reading what it can do from its modes", async ({
+test("adds a room unit in place, reading what it can do from its modes", async ({
   page,
 }) => {
-  await open(page, {
-    config: { ...LIVING_ROOM, room_units: [] },
-    states: DEVICES,
-  });
+  await open(page, withoutUnits);
 
-  await side(page).getByRole("button", { name: "+ Room unit" }).click();
-  await side(page)
-    .getByLabel("Device")
+  await zone(page, "Living room")
+    .getByRole("button", { name: "Add what heats or cools it" })
+    .click();
+  await zone(page, "Living room")
+    .getByLabel("What heats or cools Living room?")
     .selectOption("climate.living_room_hisense_ac");
-  await side(page).getByRole("button", { name: "Add unit" }).click();
 
-  await expect(side(page)).toContainText("Does all the heating and cooling.");
+  await expect(unit(page, "Living room", "Hisense AC")).toContainText(
+    "Heats and cools this room",
+  );
   const saved = await lastSaved(page);
   expect(saved?.zones[0]?.heating_order).toEqual(["hisense_ac"]);
   expect(saved?.zones[0]?.cooling_order).toEqual(["hisense_ac"]);
   expect(saved?.room_units[0]).toEqual(
     expect.objectContaining({ heat_lockout_below: null, min_run: 6 }),
   );
+  await expect(
+    zone(page, "Living room").getByRole("button", {
+      name: "Help it with a second heater or cooler",
+    }),
+  ).toBeVisible();
+});
+
+test("adding a unit can be cancelled", async ({ page }) => {
+  await open(page, FIXTURES["just-the-ac"]);
+  const room = zone(page, "Living room");
+
+  await room
+    .getByRole("button", { name: "Help it with a second heater or cooler" })
+    .click();
+  await room.getByRole("button", { name: "Cancel" }).click();
+
+  await expect(room.getByRole("region", { name: "New room unit" })).toHaveCount(
+    0,
+  );
+  expect(await lastSaved(page)).toBeUndefined();
 });
 
 test("doesn't offer HZT's own zones as room units", async ({ page }) => {
   await open(page, {
-    config: { ...LIVING_ROOM, room_units: [] },
+    ...withoutUnits,
     states: [
       ...DEVICES,
       {
@@ -248,9 +344,13 @@ test("doesn't offer HZT's own zones as room units", async ({ page }) => {
     ],
   });
 
-  await side(page).getByRole("button", { name: "+ Room unit" }).click();
+  await zone(page, "Living room")
+    .getByRole("button", { name: "Add what heats or cools it" })
+    .click();
 
-  await expect(side(page).locator("optgroup[label^='ACs'] option")).toHaveText([
+  await expect(
+    zone(page, "Living room").locator("optgroup[label^='ACs'] option"),
+  ).toHaveText([
     "Bedroom radiator",
     "Entryway radiator",
     "Hisense AC",
@@ -258,90 +358,73 @@ test("doesn't offer HZT's own zones as room units", async ({ page }) => {
   ]);
 });
 
-test("a heating lockout says who takes over", async ({ page }) => {
-  await open(page, FIXTURES["living-room"]);
-  await openUnit(page, "Hisense AC");
-
-  await expect(side(page)).toContainText(
-    "Below −15 °C, Living room radiator takes over the heating. It’s 7.2 °C now.",
-  );
-});
-
-test("a lockout on the only heater says nothing will heat", async ({
+test("the device picker separates climate entities from relays", async ({
   page,
 }) => {
-  await open(page, FIXTURES["just-the-ac"]);
-  await openUnit(page, "Hisense AC");
+  await open(page, withoutUnits);
 
-  await side(page).getByLabel("Stop heating below").selectOption("-15");
+  await zone(page, "Living room")
+    .getByRole("button", { name: "Add what heats or cools it" })
+    .click();
 
-  await expect
-    .poll(
-      async () => (await lastSaved(page))?.room_units[0]?.heat_lockout_below,
-    )
-    .toBe(-15);
-  await expect(side(page)).toContainText(
-    "Below −15 °C, nothing heats Living room.",
-  );
+  // Lights count (plugs often show up as lights); a device's settings
+  // switches don't.
+  await expect(
+    zone(page, "Living room").locator("optgroup[label^='Relays'] option"),
+  ).toHaveText(["Heater plug · Living Room", "Lava lamp · Living Room"]);
 });
 
-test("lockouts need an outdoor sensor, and say so", async ({ page }) => {
-  await open(page, FIXTURES["no-outdoor-sensor"]);
-
-  await expect(outdoorCard(page)).toContainText(
-    "Without a sensor, lockouts are off",
-  );
-  await openUnit(page, "Hisense AC");
-  await expect(side(page).getByLabel("Stop heating below")).toBeDisabled();
-  await expect(side(page)).toContainText("Needs an outdoor sensor");
-});
-
-test("a locked-out unit shows on the map and in the outdoor card", async ({
+test("a relay is added as a heater, with what to know about it", async ({
   page,
 }) => {
-  await open(page, FIXTURES["locked-out"]);
+  await open(page, withoutUnits);
 
-  await expect(page.getByText("Locked out · #1")).toBeVisible();
-  await expect(outdoorCard(page)).toContainText(
-    "It’s −18.0 °C now. Hisense AC can’t heat now.",
+  await zone(page, "Living room")
+    .getByRole("button", { name: "Add what heats or cools it" })
+    .click();
+  await zone(page, "Living room")
+    .getByLabel("What heats or cools Living room?")
+    .selectOption("switch.living_room_heater_plug");
+
+  const plug = unit(page, "Living room", "Heater plug");
+  await expect(plug.getByLabel("Heats", { exact: true })).toBeChecked();
+  await expect(plug.getByLabel("Cools", { exact: true })).not.toBeChecked();
+  await expect(plug).toContainText("HZT only switches its power");
+  expect((await lastSaved(page))?.room_units[0]).toEqual(
+    expect.objectContaining({
+      entity_id: "switch.living_room_heater_plug",
+      can_heat: true,
+      can_cool: false,
+      cycle_minutes: 10,
+    }),
   );
 });
 
-test("sets the outdoor sensor", async ({ page }) => {
-  await open(page, FIXTURES.empty);
+test("a relay heats or cools, never both", async ({ page }) => {
+  await open(page, FIXTURES.heater);
+  const plug = unit(page, "Living room", "Heater plug");
+  const does = plug.getByRole("radiogroup", {
+    name: "What Heater plug powers",
+  });
 
-  await outdoorCard(page)
-    .getByLabel("Sensor")
-    .selectOption("sensor.outdoor_temperature");
-
-  await expect
-    .poll(async () => (await lastSaved(page))?.house.outdoor_sensor)
-    .toBe("sensor.outdoor_temperature");
-});
-
-test("equipment protection says what it does", async ({ page }) => {
-  await open(page, FIXTURES["just-the-ac"]);
-  await openUnit(page, "Hisense AC");
-
-  await side(page).getByLabel("Runs at least").selectOption("8");
+  await expect(does.getByRole("radio", { name: "Heats" })).toBeChecked();
+  await does.getByRole("radio", { name: "Cools" }).check();
 
   await expect
-    .poll(async () => (await lastSaved(page))?.room_units[0]?.min_run)
-    .toBe(8);
-  await expect(side(page)).toContainText(
-    "Once started, it runs at least 8 min",
-  );
-  await expect(side(page)).toContainText(
-    "Switching between heating and cooling waits at least 10 min.",
-  );
+    .poll(async () => {
+      const saved = (await lastSaved(page))?.room_units[1];
+      return [saved?.can_heat, saved?.can_cool];
+    })
+    .toEqual([false, true]);
+  await expect(plug).toContainText("HZT switches its power on to cool");
+  await expect(plug).not.toContainText("HZT only switches its power");
 });
 
 test("removes a room unit", async ({ page }) => {
   await open(page, FIXTURES["living-room"]);
-  await openUnit(page, "Living room radiator");
 
-  await side(page)
-    .getByRole("button", { name: "Remove from Living room" })
+  await unit(page, "Living room", "Living room radiator")
+    .getByRole("button", { name: "Remove" })
     .click();
 
   await expect
@@ -349,7 +432,142 @@ test("removes a room unit", async ({ page }) => {
     .toEqual(["hisense_ac"]);
 });
 
-// ---- Screen sizes ------------------------------------------------------
+// ---- A unit's extras: pills that become panels -----------------------------
+
+test("a heating limit says who takes over and whether it may heat now", async ({
+  page,
+}) => {
+  await open(page, FIXTURES["living-room"]);
+
+  await expect(
+    panel(
+      unit(page, "Living room", "Hisense AC"),
+      "Stop it heating in the cold",
+    ),
+  ).toContainText(
+    "Below −15 °C, Living room radiator takes over the heating. It’s 7.2 °C outdoors, so it may heat now.",
+  );
+});
+
+test("a limit on the only heater says nothing will heat, and × lifts it", async ({
+  page,
+}) => {
+  await open(page, FIXTURES["just-the-ac"]);
+  const ac = unit(page, "Living room", "Hisense AC");
+
+  await ac.getByRole("button", { name: "Stop it heating in the cold" }).click();
+  await expect
+    .poll(
+      async () => (await lastSaved(page))?.room_units[0]?.heat_lockout_below,
+    )
+    .toBe(-15);
+  const limit = panel(ac, "Stop it heating in the cold");
+  await expect(limit).toContainText("Below −15 °C, nothing heats Living room.");
+
+  await limit
+    .getByRole("button", { name: "Turn off: stop it heating in the cold" })
+    .click();
+  await expect
+    .poll(
+      async () => (await lastSaved(page))?.room_units[0]?.heat_lockout_below,
+    )
+    .toBeNull();
+  await expect(
+    ac.getByRole("button", { name: "Stop it heating in the cold" }),
+  ).toBeVisible();
+});
+
+test("a limit without an outdoor sensor asks for one in place", async ({
+  page,
+}) => {
+  await open(page, FIXTURES["no-outdoor-sensor"]);
+  const ac = unit(page, "Living room", "Hisense AC");
+
+  await ac.getByRole("button", { name: "Stop it heating in the cold" }).click();
+  const limit = panel(ac, "Stop it heating in the cold");
+  await expect(limit).toContainText(
+    "It needs to know the outdoor temperature first.",
+  );
+  await limit
+    .getByLabel("Outdoor temperature from")
+    .selectOption("sensor.outdoor_temperature");
+
+  await expect
+    .poll(async () => (await lastSaved(page))?.house.outdoor_sensor)
+    .toBe("sensor.outdoor_temperature");
+});
+
+test("a locked-out unit says so", async ({ page }) => {
+  await open(page, FIXTURES["locked-out"]);
+  const ac = unit(page, "Living room", "Hisense AC");
+
+  await expect(ac).toContainText("Locked out");
+  await expect(panel(ac, "Stop it heating in the cold")).toContainText(
+    "It’s −18.0 °C outdoors, so it can’t heat now.",
+  );
+});
+
+test("longer rests open from a pill, say what they do, and × resets them", async ({
+  page,
+}) => {
+  await open(page, FIXTURES["just-the-ac"]);
+  const ac = unit(page, "Living room", "Hisense AC");
+
+  await ac
+    .getByRole("button", { name: "Let it rest longer between runs" })
+    .click();
+  const rest = panel(ac, "Let it rest longer between runs");
+  await rest.getByLabel("Runs at least").selectOption("8");
+
+  await expect
+    .poll(async () => (await lastSaved(page))?.room_units[0]?.min_run)
+    .toBe(8);
+  await expect(rest).toContainText("Once started, it runs at least 8 min");
+  await expect(rest).toContainText(
+    "Switching between heating and cooling waits at least 10 min.",
+  );
+
+  await rest
+    .getByRole("button", { name: "Turn off: let it rest longer between runs" })
+    .click();
+  await expect
+    .poll(async () => {
+      const saved = (await lastSaved(page))?.room_units[0];
+      return [saved?.min_run, saved?.min_rest];
+    })
+    .toEqual([6, 4]);
+});
+
+test("a heater's cycle opens from a pill and says what it does", async ({
+  page,
+}) => {
+  await open(page, FIXTURES.heater);
+  const plug = unit(page, "Living room", "Heater plug");
+
+  await plug
+    .getByRole("button", { name: "Switch it on longer cycles" })
+    .click();
+  const cycle = panel(plug, "Switch it on longer cycles");
+  await expect(cycle).toContainText("at 40 % demand it’s on 4 min of every 10");
+  await cycle.getByLabel("Cycle", { exact: true }).selectOption("30");
+
+  await expect
+    .poll(async () => (await lastSaved(page))?.room_units[1]?.cycle_minutes)
+    .toBe(30);
+  await expect(cycle).toContainText("part of every 30 minutes");
+});
+
+test("a climate unit has no switching settings", async ({ page }) => {
+  await open(page, FIXTURES.heater);
+
+  await expect(
+    unit(page, "Living room", "Hisense AC").getByRole("button", {
+      name: "Switch it on longer cycles",
+    }),
+  ).toHaveCount(0);
+});
+
+// ---- Screen sizes and links ------------------------------------------------
 
 test("on a narrow screen, offers HA's sidebar and fits the width", async ({
   page,
@@ -384,97 +602,9 @@ test("on a wide screen, leaves the sidebar to HA", async ({ page }) => {
   ).toHaveCount(0);
 });
 
-test("?zone= opens that zone", async ({ page }) => {
-  await page.addInitScript((f) => {
-    window.hztFixture = f;
-  }, FIXTURES.house ?? {});
-  await page.goto("/?zone=bedroom");
+test("?zone= brings that room into view", async ({ page }) => {
+  await open(page, FIXTURES.house, "?zone=entryway");
 
-  await expect(
-    side(page).getByRole("heading", { name: "Bedroom" }),
-  ).toBeVisible();
-});
-
-test("a relay is added as a heater and opens to confirm it", async ({
-  page,
-}) => {
-  await open(page, {
-    config: { ...LIVING_ROOM, room_units: [] },
-    states: DEVICES,
-  });
-
-  await side(page).getByRole("button", { name: "+ Room unit" }).click();
-  await side(page)
-    .getByLabel("Device")
-    .selectOption("switch.living_room_heater_plug");
-  await side(page).getByRole("button", { name: "Add unit" }).click();
-
-  await expect(
-    side(page).getByRole("heading", { name: "Heater plug" }),
-  ).toBeVisible();
-  await expect(side(page).getByLabel("Heats", { exact: true })).toBeChecked();
-  await expect(
-    side(page).getByLabel("Cools", { exact: true }),
-  ).not.toBeChecked();
-  await expect(side(page)).toContainText("HZT only switches its power");
-  const saved = await lastSaved(page);
-  expect(saved?.room_units[0]).toEqual(
-    expect.objectContaining({
-      entity_id: "switch.living_room_heater_plug",
-      can_heat: true,
-      can_cool: false,
-      cycle_minutes: 10,
-    }),
-  );
-});
-
-test("the device picker separates climate entities from relays", async ({
-  page,
-}) => {
-  await open(page, {
-    config: { ...LIVING_ROOM, room_units: [] },
-    states: DEVICES,
-  });
-
-  await side(page).getByRole("button", { name: "+ Room unit" }).click();
-
-  // Lights count (plugs often show up as lights); a device's settings
-  // switches don't.
-  await expect(
-    side(page).locator("optgroup[label^='Relays'] option"),
-  ).toHaveText(["Heater plug · Living Room", "Lava lamp · Living Room"]);
-});
-
-test("a heater's cycle says what it does", async ({ page }) => {
-  await open(page, FIXTURES.heater);
-  await openUnit(page, "Heater plug");
-
-  await expect(side(page)).toContainText(
-    "at 40 % demand it’s on 4 min of every 10",
-  );
-  await side(page).getByLabel("Cycle").selectOption("30");
-
-  await expect
-    .poll(async () => (await lastSaved(page))?.room_units[1]?.cycle_minutes)
-    .toBe(30);
-  await expect(side(page)).toContainText("part of every 30 minutes");
-});
-
-test("a climate unit has no switching settings", async ({ page }) => {
-  await open(page, FIXTURES.heater);
-  await openUnit(page, "Hisense AC");
-
-  await expect(side(page)).not.toContainText("Switched on and off");
-});
-
-test("the map ranks units only for what their zone is doing", async ({
-  page,
-}) => {
-  await open(page, FIXTURES.house);
-
-  // Living room heats: its heating order. Bedroom is idle: no order.
-  await expect(page.getByText("Would heat · #1")).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: /^Bedroom radiator Idle$/ }),
-  ).toBeVisible();
+  await expect(zone(page, "Entryway")).toHaveClass(/focused/);
+  await expect(zone(page, "Entryway")).toBeInViewport();
 });

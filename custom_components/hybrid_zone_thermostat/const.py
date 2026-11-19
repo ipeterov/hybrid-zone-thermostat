@@ -14,3 +14,7 @@ FRONTEND_URL: Final = f"/{DOMAIN}/frontend"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = DOMAIN
+
+# Room units switched on and off rather than set: relays and smart plugs,
+# which are often exposed as lights (Zigbee plugs, switch_as_x).
+SWITCH_DOMAINS: Final = ("switch", "light", "input_boolean")

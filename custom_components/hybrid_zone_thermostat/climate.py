@@ -21,8 +21,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 import probatio
 
 from . import HztConfigEntry
+from .const import SWITCH_DOMAINS
 from .control import ZoneState
-from .drivers import SWITCH_DOMAINS
 from .entity import ZoneEntity
 
 # HA 2026.11 renamed climate temperatures to native_* and warns about the

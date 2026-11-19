@@ -236,8 +236,13 @@ if (params.get("view") === "card") {
   const panel = document.createElement("hzt-panel") as HTMLElement & {
     hass?: Hass;
     narrow?: boolean;
+    panel?: unknown;
   };
   panel.hass = hass;
+  // HA sets these on every sidebar page element; a name clash with them
+  // breaks the page in HA only, so the harness sets them too.
+  panel.panel = { url_path: "climate-zones", config: {} };
+  Object.assign(panel, { route: { prefix: "/climate-zones", path: "" } });
   views.push(panel);
   // HA hides its sidebar, and calls the panel narrow, below 870 px.
   const narrowQuery = window.matchMedia("(max-width: 870px)");

@@ -12,7 +12,7 @@ from homeassistant.helpers.storage import Store
 
 import probatio
 
-from .const import STORAGE_KEY, STORAGE_VERSION
+from .const import STORAGE_KEY, STORAGE_VERSION, SWITCH_DOMAINS
 
 
 class HouseSettings(TypedDict):
@@ -165,6 +165,18 @@ def validate_config(raw: Any) -> HouseConfig:
             msg = f"Room unit {unit['id']} is in an unknown zone."
             raise InvalidConfig(msg)
         units_by_zone[unit["zone_id"]].add(unit["id"])
+        # A relay is on or off: on powers whatever it feeds, which heats or
+        # cools, never both. Both would run a heater to cool the room.
+        if (
+            unit["entity_id"].split(".", 1)[0] in SWITCH_DOMAINS
+            and unit["can_heat"]
+            and unit["can_cool"]
+        ):
+            msg = (
+                f"Room unit {unit['id']} is switched on and off, so it can "
+                "heat or cool, not both."
+            )
+            raise InvalidConfig(msg)
 
     for zone in config["zones"]:
         for key in ("heating_order", "cooling_order"):
