@@ -19,6 +19,7 @@ declare global {
   interface Window {
     hztFixture?: Fixture;
     hztCalls: { type: string; [key: string]: unknown }[];
+    hztSetState: (entity: HassEntity) => void;
   }
 }
 
@@ -61,6 +62,17 @@ let states: Record<string, HassEntity> = Object.fromEntries(
 // Elements showing `hass`; each gets a new object when states change, as
 // HA does, so Lit re-renders.
 const views: (HTMLElement & { hass?: Hass })[] = [];
+
+// For tests: replace an entity's state outright, as HA does when an
+// integration reloads (window.hztSetState).
+function setState(entity: HassEntity) {
+  states = { ...states, [entity.entity_id]: entity };
+  const next = makeHass();
+  for (const view of views) {
+    view.hass = next;
+  }
+}
+window.hztSetState = setState;
 
 function setAttribute(entityId: string, changes: Record<string, unknown>) {
   const entity = states[entityId];

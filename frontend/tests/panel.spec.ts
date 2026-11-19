@@ -175,6 +175,25 @@ test("each room says what it's doing, and why", async ({ page }) => {
   await expect(zone(page, "Entryway")).toContainText("Off · 16.1 °C");
 });
 
+test("a save's reload doesn't blank the room's status", async ({ page }) => {
+  await open(page, FIXTURES["living-room"]);
+  const room = zone(page, "Living room");
+  await expect(room).toContainText("Would heat · 21.4 °C");
+
+  // Reloading after a save, HA briefly has the zone's entity unavailable.
+  await page.evaluate(() =>
+    window.hztSetState({
+      entity_id: "climate.living_room",
+      state: "unavailable",
+      attributes: { friendly_name: "Living room" },
+    }),
+  );
+
+  await expect(room).toContainText("Would heat · 21.4 °C");
+  await expect(room).toContainText("0.6 °C below 22.0");
+  await expect(room).not.toContainText("Starting");
+});
+
 test("the band is centred on the target and says where", async ({ page }) => {
   await open(page, FIXTURES["living-room"]);
   const room = zone(page, "Living room");

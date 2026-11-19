@@ -144,6 +144,9 @@ export class HztPanel extends LitElement {
 
   private loading = false;
   private scrolledTo?: string;
+  // Each zone's last status read with a state, for the moment a save's
+  // reload leaves its entity without one.
+  private readonly lastStatus = new Map<string, ZoneStatus>();
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -211,7 +214,16 @@ export class HztPanel extends LitElement {
         e.attributes.hzt_zone_id === zoneId,
     );
     const a = entity?.attributes ?? {};
-    return {
+    if (typeof a.zone_state !== "string") {
+      // Saving reloads the integration, and for a moment its entities are
+      // unavailable: show the last status rather than flash "Starting"
+      // and lose the reason. Only a brand-new room has none to show.
+      const last = this.lastStatus.get(zoneId);
+      if (last) {
+        return last;
+      }
+    }
+    const status: ZoneStatus = {
       state: typeof a.zone_state === "string" ? a.zone_state : undefined,
       shadow: a.shadow === true,
       room:
@@ -229,6 +241,10 @@ export class HztPanel extends LitElement {
           )
         : {},
     };
+    if (status.state) {
+      this.lastStatus.set(zoneId, status);
+    }
+    return status;
   }
 
   private outdoor(config: HouseConfig): number | undefined {
